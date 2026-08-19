@@ -3,13 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>My Tax Relief Inventory (MY)</title>
-<link rel="preconnect" href="https://fonts.googleapis.com">
-<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Nunito:wght@400;600;700;800&family=Quicksand:wght@500;600;700&display=swap" media="print" onload="this.media='all'">
-<style>
-body{font-family:'Nunito',-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif}
-.heading{font-family:'Quicksand','Segoe UI',sans-serif}
-</style>
+<title>Tax & Finance Tracker</title>
 <style>
 :root{
   --bg:#faf7fb; --card:#ffffff; --border:#ece7f7; --text:#3a3550; --muted:#948fae;
@@ -38,6 +32,13 @@ button{font-family:inherit}
 .card.warn p,.card.warn div{color:#c25a3d}
 .input,.select{background:#fff;border:1px solid var(--border);color:var(--text);padding:9px 10px;font-family:inherit;font-size:13px;border-radius:var(--radius-sm);width:100%;outline:none;transition:border-color .15s,box-shadow .15s}
 .input:focus,.select:focus{border-color:var(--purple-light);box-shadow:0 0 0 3px var(--purple-bg)}
+/* table cells are narrow (many columns share limited width), so a value can be clipped when not being
+   edited. On focus, let the field grow past its column and float above neighboring cells so the whole
+   value/selection is readable while you're working with it, without permanently widening every column. */
+table.tax-table td .input:focus,table.tax-table td .select:focus{position:relative;z-index:8;width:auto;min-width:100%;max-width:none}
+table.tax-table td input.input[type=text]:focus,table.tax-table td input.input:not([type]):focus{min-width:220px}
+table.tax-table td select.select:focus{min-width:170px}
+table.tax-table td input.input[type=date]:focus{min-width:150px}
 label.field-label{font-size:10.5px;color:var(--muted);font-weight:600;display:block;margin-bottom:3px}
 .btn{font-family:'Quicksand',sans-serif;font-weight:700;font-size:13px;border-radius:12px;cursor:pointer;border:none;padding:12px 16px;transition:transform .08s,opacity .15s,background .15s}
 .btn:active{transform:scale(0.98)}
@@ -103,13 +104,20 @@ table.tax-table tr:hover td{background:#faf8fd}
 .file-btn{background:transparent;color:var(--purple);border:1px solid var(--purple-light);padding:5px 8px;font-weight:700;font-size:10.5px;cursor:pointer;border-radius:8px;white-space:nowrap}
 .file-btn:hover{background:var(--purple-bg)}
 .data-block{display:flex;flex-direction:column;gap:2px}
-@media (max-width:520px){ .kpi-grid{grid-template-columns:1fr 1fr} .grid2{grid-template-columns:1fr 1fr} }
+@media (max-width:520px){
+  .kpi-grid{grid-template-columns:1fr 1fr}
+  .grid2{grid-template-columns:1fr 1fr}
+  /* entry names were unreadably small on phones — 13px inputs also trigger iOS Safari's auto-zoom-on-focus,
+     which made the field jump around while typing. 16px fixes both the readability and the zoom jank. */
+  .input,.select{font-size:16px;padding:10px 10px}
+  table.tax-table{font-size:13px}
+  table.tax-table input.input[placeholder]{min-width:96px}
+}
 
 </style>
 </head>
 <body>
-<div id="root"><div style="display:flex;align-items:center;justify-content:center;min-height:100vh;color:#948fae;font-family:sans-serif;font-size:13px">Loading…</div></div>
-
+<div id="root"></div>
 <script>
 /**
  * @license React
@@ -464,7 +472,7 @@ var o=[];var l=Array.isArray(e);for(f=n.s.c;f<=n.e.c;++f)s[f]=ya(f);for(var c=n.
   var META_DB = 'tax_inventory_meta_db';
   var MONTHS = ['01', '02', '03', '04', '05', '06', '07', '08', '09', '10', '11', '12'];
   var MONTH_LABELS = { '01': 'Jan', '02': 'Feb', '03': 'Mar', '04': 'Apr', '05': 'May', '06': 'Jun', '07': 'Jul', '08': 'Aug', '09': 'Sep', '10': 'Oct', '11': 'Nov', '12': 'Dec' };
-  var YEARS = [2023, 2024, 2025, 2026];
+  var YEARS = [2023, 2024, 2025, 2026, 2027, 2028];
 
   // ---- exact data model, unchanged from the original tool ----
   var CATEGORIES = [
@@ -528,8 +536,12 @@ var o=[];var l=Array.isArray(e);for(f=n.s.c;f<=n.e.c;++f)s[f]=ya(f);for(var c=n.
   function buildRenamedName(catName, entry) {
     if (!entry.fileName) return null;
     var ext = (entry.fileName.split('.').pop() || 'dat');
-    var amt = (parseFloat(entry.amount) || 0).toFixed(2);
-    return entry.year + '_' + entry.month + '_' + sanitize(entry.name) + '_' + sanitize(catName) + '_' + amt + '.' + ext;
+    var amt = (parseFloat(entry.amount || entry.currentValue) || 0).toFixed(2);
+    var year = entry.year, month = entry.month;
+    if ((!year || !month) && entry.dueDate) { year = entry.dueDate.slice(0, 4); month = entry.dueDate.slice(5, 7); }
+    if (!year) year = new Date().getFullYear();
+    if (!month) month = MONTHS[new Date().getMonth()];
+    return year + '_' + month + '_' + sanitize(entry.name) + '_' + sanitize(catName) + '_' + amt + '.' + ext;
   }
   function uid() { return 'e' + Date.now() + Math.floor(Math.random() * 1000); }
 
@@ -562,6 +574,227 @@ var o=[];var l=Array.isArray(e);for(f=n.s.c;f<=n.e.c;++f)s[f]=ya(f);for(var c=n.
     });
   }
 
+  // ================= personal finance module =================
+  var FREQUENCIES = [
+    { value: 'monthly', label: 'Monthly' },
+    { value: 'annually', label: 'Annually' },
+    { value: 'onetime', label: 'One-time' }
+  ];
+  var BILL_CATEGORIES = ['Housing', 'Utilities', 'Insurance', 'Loan', 'Subscription', 'Other'];
+  var PORTFOLIO_TYPES = ['Stocks/ETF', 'Unit Trust', 'EPF', 'PRS', 'Fixed Deposit', 'Crypto', 'Property', 'Gold', 'Other'];
+  var TAX_LINK_OPTIONS = [{ value: '', label: '— none —' }].concat(
+    VARIABLE_CATS.map(function (c) { return { value: c.id, label: c.name }; })
+  );
+
+  function todayISO() {
+    var d = new Date();
+    return d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0');
+  }
+  // normalizes a recurring entry's frequency to exactly 'monthly' or 'annually'. Guards against e.freq being
+  // undefined/blank/unexpected (e.g. an entry duplicated before all fields were copied) — without this, any
+  // comparison like `e.freq === 'monthly'` silently falls through to whatever the "else" branch happens to do,
+  // which used to mean an entry that LOOKS monthly (the dropdown shows "Monthly", since that's the browser's
+  // default when the underlying value doesn't match any option) was actually computed as a single annual
+  // payment. Onetime entries are handled separately by their callers and never reach this function.
+  function normFreq(e) { return e.freq === 'annually' ? 'annually' : 'monthly'; }
+  // last calendar date on which this recurring entry still produces an occurrence, or null if it never ends
+  // (or the entry is one-time / has no defined end condition).
+  function occurrenceEndDate(e) {
+    if (e.freq === 'onetime' || !e.dueDate) return null;
+    var freq = normFreq(e);
+    if (e.endMode === 'date' && e.endDate) {
+      var d = new Date(e.endDate + 'T00:00:00');
+      return isNaN(d.getTime()) ? null : d;
+    }
+    if (e.endMode === 'count' && e.occurrenceCount) {
+      var n = parseInt(e.occurrenceCount, 10);
+      if (!n || n < 1) return null;
+      var start = new Date(e.dueDate + 'T00:00:00');
+      if (isNaN(start.getTime())) return null;
+      if (freq === 'monthly') { start.setMonth(start.getMonth() + (n - 1)); return start; }
+      start.setFullYear(start.getFullYear() + (n - 1)); return start;
+    }
+    return null;
+  }
+  // human label for how a recurring entry ends, used in exports
+  function endSummary(e) {
+    if (e.freq === 'onetime') return 'One-time';
+    if (e.endMode === 'date' && e.endDate) return 'Until ' + e.endDate;
+    if (e.endMode === 'count' && e.occurrenceCount) return 'For ' + e.occurrenceCount + ' ' + (normFreq(e) === 'monthly' ? 'months' : 'years');
+    return 'Ongoing';
+  }
+  // stable key identifying one occurrence of a recurring entry — "YYYY-MM" for monthly, "YYYY" for annual/onetime
+  function occKeyFor(year, month) { return month ? (year + '-' + month) : String(year); }
+  // expands a recurring entry into its individual occurrences — one per month (monthly) or per year (annually),
+  // bounded by its start/end date or occurrence count. Unbounded ("Never ends") entries are windowed to cover
+  // at least through the end of NEXT calendar year (however old the start date is, this year's and next year's
+  // occurrences are always fully visible — needed for correct year-to-date math). Each occurrence also carries
+  // its own receipt info (savedAs/fileName/receiptExempt), read from the entry's per-occurrence overrides —
+  // this is what lets every individual payment/investment have its own attached receipt.
+  function generateOccurrences(e) {
+    var amount = parseFloat(e.amount) || 0;
+    var occData = e.occurrenceData || {};
+    function withOverride(o) {
+      var od = occData[o.key] || {};
+      o.savedAs = od.savedAs || null;
+      o.fileName = od.fileName || null;
+      o.receiptExempt = !!od.receiptExempt;
+      o.date = o.month ? new Date(o.year, parseInt(o.month, 10) - 1, 1) : new Date(o.year, 11, 31);
+      return o;
+    }
+    if (e.freq === 'onetime') {
+      if (!e.dueDate) return [];
+      var y0 = e.dueDate.slice(0, 4), m0 = e.dueDate.slice(5, 7);
+      var yy0 = parseInt(y0, 10);
+      var oneOcc = { year: yy0, month: m0, amount: amount, label: (MONTH_LABELS[m0] || m0) + ' ' + yy0, key: occKeyFor(yy0, m0) };
+      return [withOverride(oneOcc)];
+    }
+    if (!e.dueDate) return [];
+    var start = new Date(e.dueDate + 'T00:00:00');
+    if (isNaN(start.getTime())) return [];
+    var endD = occurrenceEndDate(e);
+    var hardCap = 600; // absolute safety valve against bad data
+    var previewLimit = endD;
+    if (!previewLimit) {
+      var nowForPreview = new Date();
+      previewLimit = new Date(nowForPreview.getFullYear() + 1, 11, 31); // "Never ends": show through end of next year
+    }
+    var freq = normFreq(e);
+    var list = [];
+    var d = new Date(start.getTime());
+    var count = 0;
+    while (count < hardCap) {
+      if (d > previewLimit) break;
+      var yy = d.getFullYear();
+      if (freq === 'monthly') {
+        var mm = String(d.getMonth() + 1).padStart(2, '0');
+        list.push(withOverride({ year: yy, month: mm, amount: amount, label: MONTH_LABELS[mm] + ' ' + yy, key: occKeyFor(yy, mm) }));
+        d.setMonth(d.getMonth() + 1);
+      } else {
+        list.push(withOverride({ year: yy, month: null, amount: amount, label: String(yy), key: occKeyFor(yy, null) }));
+        d.setFullYear(yy + 1);
+      }
+      count++;
+    }
+    return list;
+  }
+  // year-to-date paid (occurrences up to and including today) and full year-end expected total, both scoped
+  // strictly to the given year — an occurrence dated in a different year never leaks into this year's totals.
+  function ytdAndExpected(e, year, today) {
+    var occ = generateOccurrences(e).filter(function (o) { return o.year === year; });
+    var ytd = 0, yearEnd = 0;
+    occ.forEach(function (o) {
+      yearEnd += o.amount;
+      if (o.date <= today) ytd += o.amount;
+    });
+    return { ytd: ytd, yearEnd: yearEnd, occurrences: occ };
+  }
+  // Medical/critical-illness premiums that are bundled into a life (or personal accident) insurance policy
+  // only count 60% toward the medical insurance relief — per LHDN rules for CI riders on term life/PA
+  // policies (see e.g. Prudential Malaysia's insurance tax relief guide). A policy is "bundled" here when the
+  // user has also filled in a life-portion amount alongside the medical premium. Stand-alone medical policies
+  // (no life portion entered) still count 100%. The life portion itself is informational only — log it under
+  // "EPF & life insurance" separately if you also want to claim that relief.
+  var COMBINED_MEDICAL_RELIEF_RATE = 0.6;
+  function reliefCountedAmount(cat, e, occAmount) {
+    var amt = occAmount != null ? occAmount : (parseFloat(e.amount) || 0);
+    if (cat.id === 'edu_medical_insurance' && e.subtopic === 'MedInsur' && (parseFloat(e.lifeAmount) || 0) > 0) {
+      return amt * COMBINED_MEDICAL_RELIEF_RATE;
+    }
+    return amt;
+  }
+  // total relief-countable amount an entry contributes for a given assessment year. Recurring-capable
+  // categories (currently just medical/education insurance) expand into occurrences like a bill; entries
+  // created before this feature existed (no dueDate, just a plain month/year) fall back to their original
+  // single-year amount so nothing already logged silently disappears.
+  function categoryEntryAnnualAmount(cat, e, year) {
+    if (cat.id === 'edu_medical_insurance' && e.dueDate) {
+      var occs = generateOccurrences(e).filter(function (o) { return o.year === year; });
+      return occs.reduce(function (a, o) { return a + reliefCountedAmount(cat, e, o.amount); }, 0);
+    }
+    if (cat.id === 'edu_medical_insurance') {
+      // legacy entry, no dueDate yet — counted the same way it always was (not year-filtered), so nothing
+      // already logged before this feature existed silently drops out of the total
+      return reliefCountedAmount(cat, e, parseFloat(e.amount) || 0);
+    }
+    return reliefCountedAmount(cat, e, parseFloat(e.amount) || 0);
+  }
+  // steady-state monthly equivalent, for the dashboard's "monthly expenditure" style cards
+  function monthlyEquivalent(e) {
+    if (e.freq === 'onetime') return 0; // one-time items are shown separately, not folded into a recurring average
+    var amt = parseFloat(e.amount) || 0;
+    return normFreq(e) === 'monthly' ? amt : amt / 12;
+  }
+  // whether a recurring entry is currently within its start/end window (hasn't finished yet, has already started)
+  function isActiveNow(e, today) {
+    if (e.freq === 'onetime') return true;
+    if (!e.dueDate) return true;
+    var start = new Date(e.dueDate + 'T00:00:00');
+    if (today < start) return false;
+    var endD = occurrenceEndDate(e);
+    if (endD && today > endD) return false;
+    return true;
+  }
+  function nextOccurrence(e, today) {
+    if (!e.dueDate) return null;
+    var d = new Date(e.dueDate + 'T00:00:00');
+    if (isNaN(d.getTime())) return null;
+    // one-time items just surface their own due date below (no recurrence step); recurring ones roll forward
+    // to the next unpassed monthly/annual occurrence.
+    if (e.freq !== 'onetime') {
+      if (normFreq(e) === 'monthly') { while (d < today) d.setMonth(d.getMonth() + 1); }
+      else { while (d < today) d.setFullYear(d.getFullYear() + 1); }
+    }
+    var endD = occurrenceEndDate(e);
+    if (endD && d > endD) return null; // this recurring series has already ended
+    return d;
+  }
+  function daysUntil(d, today) {
+    return Math.round((d.getTime() - today.getTime()) / 86400000);
+  }
+  function pad2(n) { return (n < 10 ? '0' : '') + n; }
+  function icsDateStamp(d) { return d.getFullYear() + pad2(d.getMonth() + 1) + pad2(d.getDate()); }
+  function escapeICS(s) { return String(s).replace(/([\\,;])/g, '\\$1').replace(/\n/g, '\\n'); }
+  function icsEventLines(entry, label) {
+    var d = nextOccurrence(entry, new Date());
+    if (!d) return [];
+    var lines = [
+      'BEGIN:VEVENT',
+      'UID:' + (entry.id || uid()) + '@malaysia-tax-relief-tracker',
+      'DTSTAMP:' + icsDateStamp(new Date()) + 'T000000Z',
+      'DTSTART;VALUE=DATE:' + icsDateStamp(d),
+      'SUMMARY:' + escapeICS(label + ': ' + (entry.name || 'Payment') + ' (RM ' + (parseFloat(entry.amount) || 0).toFixed(2) + ')')
+    ];
+    if (entry.freq === 'monthly' || entry.freq === 'annually') {
+      var rrule = 'RRULE:FREQ=' + (entry.freq === 'monthly' ? 'MONTHLY' : 'YEARLY');
+      if (entry.endMode === 'date' && entry.endDate) {
+        var untilD = new Date(entry.endDate + 'T00:00:00');
+        if (!isNaN(untilD.getTime())) rrule += ';UNTIL=' + icsDateStamp(untilD);
+      } else if (entry.endMode === 'count' && entry.occurrenceCount) {
+        var n = parseInt(entry.occurrenceCount, 10);
+        if (n > 0) rrule += ';COUNT=' + n;
+      }
+      lines.push(rrule);
+    }
+    lines.push('BEGIN:VALARM', 'ACTION:DISPLAY', 'DESCRIPTION:Reminder', 'TRIGGER:-P1D', 'END:VALARM', 'END:VEVENT');
+    return lines;
+  }
+  function buildICS(entries, label) {
+    var body = [];
+    entries.forEach(function (e) { body = body.concat(icsEventLines(e, label)); });
+    if (!body.length) return null;
+    return ['BEGIN:VCALENDAR', 'VERSION:2.0', 'PRODID:-//Malaysia Tax Relief Tracker//EN', 'CALSCALE:GREGORIAN'].concat(body).concat(['END:VCALENDAR']).join('\r\n');
+  }
+  function downloadText(text, filename, mime) {
+    var blob = new Blob([text], { type: mime || 'text/plain' });
+    var url = URL.createObjectURL(blob);
+    var a = document.createElement('a');
+    a.href = url; a.download = filename; document.body.appendChild(a); a.click(); a.remove();
+    URL.revokeObjectURL(url);
+  }
+  // digit-masking for the amounts-hidden privacy toggle — keeps "RM" / commas / decimal shape, blanks the digits
+  function maskRM(str) { return String(str).replace(/[0-9]/g, '•'); }
+
   // ---------------- small icon set (inline svg, no deps) ----------------
   function Svg(props) {
     var children = props.paths.map(function (p, i) {
@@ -583,7 +816,13 @@ var o=[];var l=Array.isArray(e);for(f=n.s.c;f<=n.e.c;++f)s[f]=ya(f);for(var c=n.
     grid: { paths: [{ d: 'M3 4h4v4H3z' }, { d: 'M10 6h11' }, { d: 'M3 10h4v4H3z' }, { d: 'M10 12h11' }, { d: 'M3 16h4v4H3z' }, { d: 'M10 18h11' }] },
     chart: { paths: [{ d: 'M4 20V10' }, { d: 'M12 20V4' }, { d: 'M20 20v-6' }] },
     folder: { paths: [{ d: 'M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2Z' }] },
-    check: { paths: [{ d: 'M5 12l5 5L20 7' }] }
+    check: { paths: [{ d: 'M5 12l5 5L20 7' }] },
+    eye: { paths: [{ d: 'M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7-10-7-10-7Z' }, { d: 'M12 15a3 3 0 1 0 0-6 3 3 0 0 0 0 6Z' }] },
+    eyeOff: { paths: [{ d: 'M3 3l18 18' }, { d: 'M10.6 5.2A10.4 10.4 0 0 1 12 5c6.5 0 10 7 10 7a17.7 17.7 0 0 1-3.2 4.1M6.6 6.6C4.1 8.3 2 12 2 12s3.5 7 10 7a9.9 9.9 0 0 0 4.4-1' }, { d: 'M9.9 9.9a3 3 0 0 0 4.2 4.2' }] },
+    wallet: { paths: [{ d: 'M3 7a2 2 0 0 1 2-2h13a1 1 0 0 1 1 1v3' }, { d: 'M3 7v10a2 2 0 0 0 2 2h14a1 1 0 0 0 1-1v-4' }, { d: 'M17 13h3a1 1 0 0 0 1-1v-2a1 1 0 0 0-1-1h-3a2 2 0 0 0 0 4Z' }] },
+    trend: { paths: [{ d: 'M3 17l6-6 4 4 8-8' }, { d: 'M15 7h6v6' }] },
+    bell: { paths: [{ d: 'M6 8a6 6 0 1 1 12 0c0 5 2 6 2 6H4s2-1 2-6Z' }, { d: 'M10 20a2 2 0 0 0 4 0' }] },
+    alert: { paths: [{ d: 'M12 9v4' }, { d: 'M12 17h.01' }, { d: 'M10.3 3.9 2.5 18a1.8 1.8 0 0 0 1.6 2.6h15.8a1.8 1.8 0 0 0 1.6-2.6L13.7 3.9a1.8 1.8 0 0 0-3.4 0Z' }] }
   };
   function Icon(name, opts) {
     var def = ICONS[name];
@@ -594,8 +833,13 @@ var o=[];var l=Array.isArray(e);for(f=n.s.c;f<=n.e.c;++f)s[f]=ya(f);for(var c=n.
   // Powers EVERY multi-entry section: rental income, other income, and all 21 relief categories.
   function EntryTable(props) {
     var columns = props.columns, rows = props.rows, onChange = props.onChange, onRemove = props.onRemove,
-      onDuplicate = props.onDuplicate, onAttach = props.onAttach, addLabel = props.addLabel, onAdd = props.onAdd;
+      onDuplicate = props.onDuplicate, onAttach = props.onAttach, addLabel = props.addLabel, onAdd = props.onAdd,
+      onIcs = props.onIcs, onAttachOccurrence = props.onAttachOccurrence, onToggleOccExempt = props.onToggleOccExempt;
     var fileInputs = useRef({});
+    var occFileInputs = useRef({});
+    var sExp = useState({}); var expanded = sExp[0], setExpanded = sExp[1];
+    var today = new Date(); today.setHours(0, 0, 0, 0);
+    var curYear = today.getFullYear();
 
     if (!rows.length) {
       return h('div', null,
@@ -611,8 +855,8 @@ var o=[];var l=Array.isArray(e);for(f=n.s.c;f<=n.e.c;++f)s[f]=ya(f);for(var c=n.
             columns.map(function (c) { return h('th', { key: c.key }, c.label); }),
             h('th', { key: '_actions' }, '')
           )),
-          h('tbody', null, rows.map(function (row) {
-            return h('tr', { key: row.id },
+          h('tbody', null, rows.reduce(function (acc, row) {
+            acc.push(h('tr', { key: row.id },
               columns.map(function (c) {
                 return h('td', { key: c.key }, renderCell(c, row));
               }),
@@ -620,8 +864,56 @@ var o=[];var l=Array.isArray(e);for(f=n.s.c;f<=n.e.c;++f)s[f]=ya(f);for(var c=n.
                 onDuplicate && h('button', { type: 'button', className: 'icon-btn', 'aria-label': 'Duplicate', onClick: function () { onDuplicate(row.id); } }, Icon('duplicate', { size: 14 })),
                 h('button', { type: 'button', className: 'icon-btn danger', 'aria-label': 'Remove', onClick: function () { onRemove(row.id); } }, Icon('remove', { size: 14 }))
               )
-            );
-          }))
+            ));
+            if (expanded[row.id]) {
+              var occ = generateOccurrences(row);
+              var isRecurring = row.freq && row.freq !== 'onetime';
+              var ytdInfo = isRecurring ? ytdAndExpected(row, curYear, today) : null;
+              acc.push(h('tr', { key: row.id + '_sched' },
+                h('td', { colSpan: columns.length + 1, style: { background: '#faf8fd', padding: '8px 10px' } },
+                  h('div', { style: { display: 'flex', flexDirection: 'column', gap: 8 } },
+                    ytdInfo && h('div', { style: { display: 'flex', gap: 16, flexWrap: 'wrap', fontSize: 11.5, padding: '2px 0 6px', borderBottom: '1px solid var(--border)' } },
+                      h('span', null, h('strong', { style: { color: 'var(--green-dark)' } }, fmtRM(ytdInfo.ytd)), ' paid YTD (' + curYear + ')'),
+                      h('span', null, h('strong', null, fmtRM(ytdInfo.yearEnd)), ' expected by year-end')
+                    ),
+                    occ.length
+                      ? h('div', { style: { display: 'flex', flexDirection: 'column', gap: 4 } },
+                        occ.map(function (o) {
+                          return h('div', {
+                            key: o.key,
+                            style: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', background: '#fff', border: '1px solid var(--border)', borderRadius: 8, padding: '4px 8px', fontSize: 11, gap: 8, flexWrap: 'wrap' }
+                          },
+                            h('span', null, o.label + ': ' + fmtRM(o.amount) + (o.savedAs ? ' · 📎' : '')),
+                            h('span', { style: { display: 'flex', alignItems: 'center', gap: 6 } },
+                              onAttachOccurrence && h('div', null,
+                                h('button', {
+                                  type: 'button', className: 'file-btn', style: { fontSize: 9.5, padding: '3px 6px' },
+                                  onClick: function () { var el = occFileInputs.current[row.id + '_' + o.key]; if (el) el.click(); }
+                                }, o.savedAs ? 'Replace' : 'Attach'),
+                                h('input', {
+                                  type: 'file', accept: '.pdf,.jpg,.jpeg,.png,image/jpeg,image/png,application/pdf', style: { display: 'none' },
+                                  ref: function (el) { occFileInputs.current[row.id + '_' + o.key] = el; },
+                                  onChange: function (e) { if (e.target.files[0]) onAttachOccurrence(row, o.key, e.target.files[0]); e.target.value = ''; }
+                                })
+                              ),
+                              onToggleOccExempt && h('label', { style: { display: 'flex', alignItems: 'center', gap: 3, fontSize: 9.5, color: 'var(--muted)', cursor: 'pointer', whiteSpace: 'nowrap' } },
+                                h('input', {
+                                  type: 'checkbox', checked: !!o.receiptExempt,
+                                  onChange: function (e) { onToggleOccExempt(row, o.key, e.target.checked); }
+                                }),
+                                'No receipt'
+                              )
+                            )
+                          );
+                        })
+                      )
+                      : h('span', { className: 'muted', style: { fontSize: 11 } }, 'No scheduled occurrences yet — set a start date.')
+                  )
+                )
+              ));
+            }
+            return acc;
+          }, []))
         )
       ),
       h('button', { type: 'button', className: 'btn-ghost', onClick: onAdd }, '+ ' + addLabel)
@@ -629,8 +921,10 @@ var o=[];var l=Array.isArray(e);for(f=n.s.c;f<=n.e.c;++f)s[f]=ya(f);for(var c=n.
 
     function renderCell(c, row) {
       if (c.type === 'select') {
+        var curOpt = c.options.filter(function (opt) { return (typeof opt === 'string' ? opt : opt.value) === (row[c.key] || ''); })[0];
+        var curLabel = curOpt ? (typeof curOpt === 'string' ? curOpt : curOpt.label) : '';
         return h('select', {
-          className: 'select', value: row[c.key] || '',
+          className: 'select', value: row[c.key] || '', title: curLabel,
           onChange: function (e) { onChange(row.id, c.key, e.target.value); }
         }, c.options.map(function (opt) {
           var val = typeof opt === 'string' ? opt : opt.value;
@@ -666,10 +960,70 @@ var o=[];var l=Array.isArray(e);for(f=n.s.c;f<=n.e.c;++f)s[f]=ya(f);for(var c=n.
           })
         );
       }
+      if (c.type === 'date') {
+        return h('input', {
+          className: 'input', type: 'date', value: row[c.key] || '',
+          onChange: function (e) { onChange(row.id, c.key, e.target.value); }
+        });
+      }
+      if (c.type === 'money') {
+        return h('input', {
+          className: 'input', type: 'number', min: '0', step: '0.01', placeholder: '0.00', value: row[c.key] || '',
+          title: row[c.key] ? fmtRM(parseFloat(row[c.key]) || 0) : '',
+          onChange: function (e) { onChange(row.id, c.key, e.target.value); }
+        });
+      }
+      if (c.type === 'recur-end') {
+        if (row.freq === 'onetime') return h('span', { className: 'muted', style: { fontSize: 11 } }, '—');
+        var mode = row.endMode || 'never';
+        return h('div', { style: { display: 'flex', gap: 4, alignItems: 'center', flexWrap: 'wrap' } },
+          h('select', {
+            className: 'select', style: { width: 92, fontSize: 11, padding: '9px 4px' }, value: mode,
+            onChange: function (e) { onChange(row.id, 'endMode', e.target.value); }
+          },
+            h('option', { value: 'never' }, 'Never ends'),
+            h('option', { value: 'date' }, 'On date'),
+            h('option', { value: 'count' }, 'After N')
+          ),
+          mode === 'date' && h('input', {
+            className: 'input', type: 'date', style: { width: 130 }, value: row.endDate || '',
+            onChange: function (e) { onChange(row.id, 'endDate', e.target.value); }
+          }),
+          mode === 'count' && h('input', {
+            className: 'input', type: 'number', min: '1', step: '1', style: { width: 62 },
+            placeholder: normFreq(row) === 'monthly' ? 'months' : 'years', value: row.occurrenceCount || '',
+            onChange: function (e) { onChange(row.id, 'occurrenceCount', e.target.value); }
+          })
+        );
+      }
+      if (c.type === 'schedule') {
+        var occCount = generateOccurrences(row).length;
+        if (!occCount) return h('span', { className: 'muted', style: { fontSize: 11 } }, '—');
+        var isOpen = !!expanded[row.id];
+        var unitLabel = row.freq === 'onetime' ? 'Receipt' : (occCount + (normFreq(row) === 'monthly' ? ' mo' : ' yr'));
+        return h('button', {
+          type: 'button', className: 'file-btn',
+          onClick: function () { setExpanded(function (s) { var n = {}; Object.assign(n, s); n[row.id] = !s[row.id]; return n; }); }
+        }, (isOpen ? '▾ ' : '▸ ') + unitLabel);
+      }
+      if (c.type === 'check') {
+        return h('label', { style: { display: 'flex', alignItems: 'center', gap: 4, fontSize: 10.5, whiteSpace: 'nowrap', cursor: 'pointer', color: 'var(--muted)' } },
+          h('input', {
+            type: 'checkbox', checked: !!row[c.key],
+            onChange: function (e) { onChange(row.id, c.key, e.target.checked); }
+          }),
+          c.checkLabel || 'No receipt'
+        );
+      }
+      if (c.type === 'calendar') {
+        return row.dueDate ? h('button', { type: 'button', className: 'file-btn', onClick: function () { onIcs && onIcs(row); } }, '📅 .ics') : h('span', { className: 'muted', style: { fontSize: 11 } }, '—');
+      }
       // text
+      var maxLen = c.maxLength || 10;
       return h('input', {
-        className: 'input', maxLength: 10, placeholder: c.placeholder || '', value: row[c.key] || '',
-        onChange: function (e) { onChange(row.id, c.key, e.target.value.slice(0, 10)); }
+        className: 'input', maxLength: maxLen, placeholder: c.placeholder || '', value: row[c.key] || '',
+        title: row[c.key] || '',
+        onChange: function (e) { onChange(row.id, c.key, e.target.value.slice(0, maxLen)); }
       });
     }
   }
@@ -679,20 +1033,42 @@ var o=[];var l=Array.isArray(e);for(f=n.s.c;f<=n.e.c;++f)s[f]=ya(f);for(var c=n.
     var cat = props.cat, enabled = props.enabled, isOpen = props.isOpen, entries = props.entries,
       onToggleOpen = props.onToggleOpen, onToggleEnabled = props.onToggleEnabled, onCopy = props.onCopy,
       copied = props.copied, onChange = props.onChange, onRemove = props.onRemove, onDuplicate = props.onDuplicate,
-      onAttach = props.onAttach, onAdd = props.onAdd;
+      onAttach = props.onAttach, onAdd = props.onAdd, linked = props.linked || [], goFinance = props.goFinance,
+      onAttachOccurrence = props.onAttachOccurrence, onToggleOccExempt = props.onToggleOccExempt, onIcs = props.onIcs,
+      assessmentYear = props.assessmentYear;
 
-    var raw = entries.reduce(function (a, e) { return a + (parseFloat(e.amount) || 0); }, 0);
+    var sExp = useState({}); var expandedLinked = sExp[0], setExpandedLinked = sExp[1];
+
+    // "Education & medical insurance" is the one relief category that also gets the recurring-entry
+    // treatment (start date, ends condition, per-occurrence receipts) — matching how bills/investments work
+    // — since insurance premiums are typically paid on a schedule. Everything else stays on the simpler
+    // single month/year model.
+    var isRecurringCat = cat.id === 'edu_medical_insurance';
+    var manualRaw = entries.reduce(function (a, e) { return a + categoryEntryAnnualAmount(cat, e, assessmentYear); }, 0);
+    var linkedRaw = linked.reduce(function (a, e) { return a + e.annualAmount; }, 0);
+    var raw = manualRaw + linkedRaw;
     var capped = Math.min(raw, cat.cap);
     var pct = Math.min(100, cat.cap ? (raw / cat.cap * 100) : 0);
     var over = raw > cat.cap;
 
-    var columns = [
+    var columns = isRecurringCat ? [
+      { key: 'subtopic', type: 'select', label: 'Subtopic', options: cat.subtopics },
+      { key: 'name', type: 'text', label: 'Name', placeholder: 'e.g. Policy no.' },
+      { key: 'freq', type: 'select', label: 'Frequency', options: FREQUENCIES },
+      { key: 'amount', type: 'money', label: 'Medical premium (RM)' },
+      { key: 'lifeAmount', type: 'money', label: 'Life portion (RM), if bundled' },
+      { key: 'dueDate', type: 'date', label: 'Start date' },
+      { key: 'endMode', type: 'recur-end', label: 'Ends' },
+      { key: 'schedule', type: 'schedule', label: 'Items & receipts' },
+      { key: 'ics', type: 'calendar', label: 'Reminder' }
+    ] : [
       { key: 'subtopic', type: 'select', label: 'Subtopic', options: cat.subtopics },
       { key: 'name', type: 'text', label: 'Name', placeholder: 'e.g. Clinic' },
       { key: 'amount', type: 'number', label: 'Amount (RM)' },
       { key: 'month', type: 'month', label: 'Month' },
       { key: 'year', type: 'year', label: 'Year' },
-      { key: 'file', type: 'file', label: 'Receipt' }
+      { key: 'file', type: 'file', label: 'Receipt' },
+      { key: 'receiptExempt', type: 'check', label: '', checkLabel: 'No receipt' }
     ];
 
     return h('div', { className: 'card' + (enabled ? '' : ' disabled-card') },
@@ -723,11 +1099,45 @@ var o=[];var l=Array.isArray(e);for(f=n.s.c;f<=n.e.c;++f)s[f]=ya(f);for(var c=n.
           copied && h('span', { style: { color: 'var(--green-dark)', fontWeight: 700 } }, 'Copied')
         )
       ),
-      isOpen && h('div', { style: { borderTop: '1px solid var(--border)', paddingTop: 10 } },
+      isOpen && h('div', { style: { borderTop: '1px solid var(--border)', paddingTop: 10, display: 'flex', flexDirection: 'column', gap: 10 } },
+        isRecurringCat && h('div', { className: 'muted', style: { fontSize: 11, lineHeight: 1.5, marginTop: -4 } },
+          'For a "Medical" policy, only fill in "Life portion" if this same policy also bundles life/critical-illness coverage — then only 60% of the medical premium counts toward this relief (the life portion itself isn’t added here; log it separately under EPF & life insurance if you want that relief too). Leave it blank for a stand-alone medical policy and the full premium counts.'
+        ),
         h(EntryTable, {
           columns: columns, rows: entries, onChange: onChange, onRemove: onRemove, onDuplicate: onDuplicate,
-          onAttach: onAttach, addLabel: 'Add entry', onAdd: onAdd
-        })
+          onAttach: onAttach, onAttachOccurrence: onAttachOccurrence, onToggleOccExempt: onToggleOccExempt, onIcs: onIcs,
+          addLabel: 'Add entry', onAdd: onAdd
+        }),
+        linked.length > 0 && h('div', { style: { display: 'flex', flexDirection: 'column', gap: 6 } },
+          h('div', { className: 'muted', style: { fontSize: 10.5, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '.03em' } }, 'Auto-linked from Bills & Income / Investments'),
+          linked.map(function (l) {
+            var multi = l.occurrences.length > 1;
+            var isExp = !!expandedLinked[l.id];
+            return h('div', { key: l.id, style: { display: 'flex', flexDirection: 'column', gap: 4, background: '#faf8fd', border: '1px solid var(--border)', borderRadius: 10, padding: '7px 10px', fontSize: 12 } },
+              h('div', { style: { display: 'flex', justifyContent: 'space-between', alignItems: 'center' } },
+                h('span', {
+                  style: { display: 'flex', alignItems: 'center', gap: 6, cursor: multi ? 'pointer' : 'default' },
+                  onClick: function () { if (multi) setExpandedLinked(function (s) { var n = {}; Object.assign(n, s); n[l.id] = !s[l.id]; return n; }); }
+                },
+                  '🔗 ', l.name || '(unnamed)', h('span', { className: 'muted' }, ' · ' + l.freqLabel + (multi ? ' · ' + l.occurrences.length + ' items' : '')),
+                  multi && h('span', { className: 'chev' + (isExp ? ' open' : '') }, Icon('chevron', { size: 12 }))
+                ),
+                h('span', { style: { display: 'flex', alignItems: 'center', gap: 8 } },
+                  h('strong', null, fmtRM(l.annualAmount) + '/yr'),
+                  h('button', { type: 'button', className: 'btn-chip', onClick: function () { goFinance && goFinance(l.source); } }, 'Edit')
+                )
+              ),
+              multi && isExp && h('div', { style: { display: 'flex', flexWrap: 'wrap', gap: 6, marginTop: 2 } },
+                l.occurrences.map(function (o, i) {
+                  return h('span', {
+                    key: i, className: 'pill',
+                    style: { background: '#fff', border: '1px solid var(--border)', borderRadius: 8, padding: '3px 8px', fontSize: 10.5 }
+                  }, o.label + ': ' + fmtRM(o.amount));
+                })
+              )
+            );
+          })
+        )
       )
     );
   }
@@ -757,11 +1167,13 @@ var o=[];var l=Array.isArray(e);for(f=n.s.c;f<=n.e.c;++f)s[f]=ya(f);for(var c=n.
     var s16 = useState(false); var allOpen = s16[0], setAllOpen = s16[1];
     var s17 = useState(null); var maritalStatus = s17[0], setMaritalStatusRaw = s17[1]; // null | 'single' | 'married'
     var s18 = useState(null); var hasKids = s18[0], setHasKidsRaw = s18[1]; // null | true | false
+    var s19 = useState(false); var amountsHidden = s19[0], setAmountsHidden = s19[1];
 
     var dirHandleRef = useRef(null);
     var loadedRef = useRef(false);
     var toastTimer = useRef(null);
     var importInputRef = useRef(null);
+    var R = amountsHidden ? function (n) { return maskRM(fmtRM(n)); } : fmtRM; // display formatter honoring the hide/show toggle
 
     function showToast(msg) {
       setToast(msg);
@@ -784,6 +1196,7 @@ var o=[];var l=Array.isArray(e);for(f=n.s.c;f<=n.e.c;++f)s[f]=ya(f);for(var c=n.
         setDisabledCats(loaded.disabledCats || {});
         setMaritalStatusRaw(loaded.maritalStatus || null);
         setHasKidsRaw(loaded.hasKids === true || loaded.hasKids === false ? loaded.hasKids : null);
+        setAmountsHidden(!!loaded.amountsHidden);
       }
       idbGetMeta('dirHandle').then(function (handle) {
         if (!handle) return;
@@ -804,20 +1217,17 @@ var o=[];var l=Array.isArray(e);for(f=n.s.c;f<=n.e.c;++f)s[f]=ya(f);for(var c=n.
     useEffect(function () {
       if (!loadedRef.current) return;
       persist();
-    }, [entries, taxpayerName, assessmentYear, disabledCats, maritalStatus, hasKids]);
+    }, [entries, taxpayerName, assessmentYear, disabledCats, maritalStatus, hasKids, amountsHidden]);
 
     function persist() {
       try {
         var now = Date.now();
-        var cleanEntries = {};
-        Object.keys(entries).forEach(function (catId) {
-          cleanEntries[catId] = (entries[catId] || []).map(function (e) {
-            return { id: e.id, name: e.name || '', amount: e.amount, month: e.month, year: e.year, kind: e.kind, subtopic: e.subtopic, fileName: e.fileName || null, fileType: e.fileType || null, savedAs: e.savedAs || null };
-          });
-        });
+        // deep-clone via JSON round-trip: every entry field (tax, bills, income, investments, portfolio) is
+        // preserved as-is rather than whitelisted, so new finance fields never get silently dropped on save.
+        var cleanEntries = JSON.parse(JSON.stringify(entries));
         localStorage.setItem(STORAGE_KEY, JSON.stringify({
-          entries: cleanEntries, taxpayerName: taxpayerName, assessmentYear: assessmentYear,
-          disabledCats: disabledCats, maritalStatus: maritalStatus, hasKids: hasKids, lastSavedAt: now
+          __version: 3, entries: cleanEntries, taxpayerName: taxpayerName, assessmentYear: assessmentYear,
+          disabledCats: disabledCats, maritalStatus: maritalStatus, hasKids: hasKids, amountsHidden: amountsHidden, lastSavedAt: now
         }));
         setLastSavedAt(now);
       } catch (e) {
@@ -878,7 +1288,19 @@ var o=[];var l=Array.isArray(e);for(f=n.s.c;f<=n.e.c;++f)s[f]=ya(f);for(var c=n.
         for (var i = 0; i < list.length; i++) if (list[i].id === entryId) { idx = i; break; }
         if (idx < 0) return s;
         var src = list[idx];
-        var copy = { id: uid(), name: src.name, amount: src.amount, month: src.month, year: src.year, kind: src.kind, subtopic: src.subtopic, fileName: null, fileType: null, savedAs: null };
+        // copy every field (name, amount, freq, dueDate, endMode/endDate/occurrenceCount, taxLink, category,
+        // month/year/kind/subtopic, etc.) — this table is reused for many entry shapes (tax categories,
+        // rental, bills, investments, portfolio), so a generic full copy is the only way that's safe for all
+        // of them. Previously only a few tax-category-style fields were copied, which silently dropped a
+        // duplicated bill/investment's frequency and start date, leaving it looking "monthly" in the UI
+        // (the dropdown defaults to showing its first option when the underlying value is missing) while
+        // actually being computed as a single annual payment.
+        var copy = {};
+        Object.assign(copy, src);
+        copy.id = uid();
+        // receipts and per-occurrence attachments should never carry over to the duplicate
+        copy.fileName = null; copy.fileType = null; copy.savedAs = null; copy.receiptExempt = false;
+        copy.occurrenceData = {};
         list.splice(idx + 1, 0, copy);
         var next = {}; Object.assign(next, s); next[catId] = list; return next;
       });
@@ -935,6 +1357,57 @@ var o=[];var l=Array.isArray(e);for(f=n.s.c;f<=n.e.c;++f)s[f]=ya(f);for(var c=n.
       }).catch(function (err) { showToast('Could not save receipt: ' + err.message); });
     }
 
+    // per-occurrence receipt: every individual payment/investment in a recurring series gets its own file,
+    // named with that specific occurrence's year/month rather than the series' start date.
+    function attachOccurrenceFile(catId, entry, label, occKey, file) {
+      if (!file) return;
+      var okType = /pdf|jpe?g|png/i.test(file.type) || /\.(pdf|jpe?g|png)$/i.test(file.name);
+      if (!okType) { showToast('Please attach a PDF, JPG or PNG file.'); return; }
+      if (!dirHandleRef.current) { showToast('Choose a storage folder first, in the Data tab.'); return; }
+      dirHandleRef.current.queryPermission({ mode: 'readwrite' }).then(function (perm) {
+        if (perm !== 'granted') {
+          setFolderNeedsReconnect(true);
+          showToast('Folder access needs reconnecting. Go to the Data tab, click "Reconnect access", then try again.');
+          return;
+        }
+        var occYear = occKey.slice(0, 4);
+        var occMonth = occKey.length > 4 ? occKey.slice(5, 7) : MONTHS[new Date().getMonth()];
+        var renamed = buildRenamedName(label, Object.assign({}, entry, { fileName: file.name, year: occYear, month: occMonth }));
+        return dirHandleRef.current.getFileHandle(renamed, { create: true }).then(function (fh) {
+          return fh.createWritable();
+        }).then(function (writable) {
+          return writable.write(file).then(function () { return writable.close(); });
+        }).then(function () {
+          setEntries(function (s) {
+            var next = {}; Object.assign(next, s);
+            next[catId] = (s[catId] || []).map(function (e) {
+              if (e.id !== entry.id) return e;
+              var copy = {}; Object.assign(copy, e);
+              var occData = {}; Object.assign(occData, copy.occurrenceData || {});
+              occData[occKey] = Object.assign({}, occData[occKey], { fileName: file.name, fileType: file.type, savedAs: renamed });
+              copy.occurrenceData = occData;
+              return copy;
+            });
+            return next;
+          });
+        });
+      }).catch(function (err) { showToast('Could not save receipt: ' + err.message); });
+    }
+    function toggleOccurrenceExempt(catId, entry, occKey, val) {
+      setEntries(function (s) {
+        var next = {}; Object.assign(next, s);
+        next[catId] = (s[catId] || []).map(function (e) {
+          if (e.id !== entry.id) return e;
+          var copy = {}; Object.assign(copy, e);
+          var occData = {}; Object.assign(occData, copy.occurrenceData || {});
+          occData[occKey] = Object.assign({}, occData[occKey], { receiptExempt: val });
+          copy.occurrenceData = occData;
+          return copy;
+        });
+        return next;
+      });
+    }
+
     function findEntry(catId, entryId) {
       var list = entries[catId] || [];
       for (var i = 0; i < list.length; i++) if (list[i].id === entryId) return list[i];
@@ -943,75 +1416,206 @@ var o=[];var l=Array.isArray(e);for(f=n.s.c;f<=n.e.c;++f)s[f]=ya(f);for(var c=n.
 
     // ---- derived data ----
     var derived = useMemo(function () {
-      var active = '#3f9c82', inactive = '#c4bfd8';
       var grand = FIXED_CAT.cap;
       var categoriesWithEntriesCount = 0, attachmentCount = 0, unclaimed = 0, fullyUsedCount = 0;
       var opportunities = [];
+      var missingReceipts = [];
+      var freqLabelOf = function (f) { return f === 'onetime' ? 'One-time' : f === 'annually' ? 'Annually' : 'Monthly'; };
+
+      var billsList = entries['bills'] || [];
+      var incomeList = entries['passive_income'] || [];
+      var investContribList = entries['invest_contrib'] || [];
+      var portfolioList = entries['portfolio'] || [];
+
+      var today = new Date(); today.setHours(0, 0, 0, 0);
+
+      // group bills + investment contributions that are tagged to a tax relief category. Each linked source
+      // entry is broken down into its individual occurrences within the current assessment year — these are
+      // the "auto-created" tax relief line items, always in sync with the source bill/investment (edit the
+      // amount, dates or link there and this recalculates automatically; no manual duplication needed).
+      var linkedByCategory = {};
+      billsList.concat(investContribList).forEach(function (e) {
+        if (!e.taxLink) return;
+        var occurrences = generateOccurrences(e).filter(function (o) { return o.year === assessmentYear; });
+        var annualAmount = occurrences.reduce(function (a, o) { return a + o.amount; }, 0);
+        var arr = linkedByCategory[e.taxLink] || (linkedByCategory[e.taxLink] = []);
+        arr.push({ id: e.id, name: e.name, freqLabel: freqLabelOf(e.freq), annualAmount: annualAmount, occurrences: occurrences, source: billsList.indexOf(e) >= 0 ? 'bills' : 'invest' });
+      });
 
       var categoriesView = VARIABLE_CATS.map(function (cat) {
         var enabled = !disabledCats[cat.id];
         var list = entries[cat.id] || [];
-        var raw = list.reduce(function (a, e) { return a + (parseFloat(e.amount) || 0); }, 0);
+        var manualRaw = list.reduce(function (a, e) { return a + categoryEntryAnnualAmount(cat, e, assessmentYear); }, 0);
+        var linked = linkedByCategory[cat.id] || [];
+        var linkedRaw = linked.reduce(function (a, e) { return a + e.annualAmount; }, 0);
+        var raw = manualRaw + linkedRaw;
         var capped = Math.min(raw, cat.cap);
         var gap = cat.cap - capped;
         if (enabled) {
           grand += capped; unclaimed += gap;
           if (gap <= 0.001) fullyUsedCount++; else opportunities.push({ name: cat.name, gap: gap, capped: capped, cap: cat.cap });
-          if (list.length) categoriesWithEntriesCount++;
+          if (list.length || linked.length) categoriesWithEntriesCount++;
         }
-        list.forEach(function (e) { if (e.savedAs) attachmentCount++; });
+        list.forEach(function (e) {
+          if (cat.id === 'edu_medical_insurance' && e.dueDate) {
+            generateOccurrences(e).forEach(function (o) {
+              if (o.date > today) return;
+              if (o.savedAs) { attachmentCount++; return; }
+              if (o.amount > 0 && !o.receiptExempt) missingReceipts.push({ id: e.id + '_' + o.key, entryId: e.id, occKey: o.key, catId: cat.id, name: (e.name || cat.name) + ' · ' + o.label, where: 'Tax Relief · ' + cat.name, amount: o.amount });
+            });
+          } else if (e.savedAs) { attachmentCount++; }
+          else if (parseFloat(e.amount) > 0 && !e.receiptExempt) missingReceipts.push({ id: e.id, entryId: e.id, occKey: null, catId: cat.id, name: e.name || cat.name, where: 'Tax Relief · ' + cat.name, amount: parseFloat(e.amount) });
+        });
         var normEntries = list.map(function (e) {
           var st = e.subtopic && cat.subtopics.indexOf(e.subtopic) >= 0 ? e.subtopic : cat.subtopics[0];
           return Object.assign({}, e, { subtopic: st });
         });
-        return { cat: cat, enabled: enabled, raw: raw, capped: capped, entries: normEntries };
+        return { cat: cat, enabled: enabled, raw: raw, capped: capped, entries: normEntries, linked: linked };
       });
 
       var enabledCategoriesView = categoriesView.filter(function (c) { return c.enabled; });
       opportunities.sort(function (a, b) { return b.gap - a.gap; });
       var topOpportunities = opportunities.slice(0, 5);
 
+      // rental & loan interest is now recurring-capable, just like bills — each entry expands into occurrences
+      // scoped to the selected assessment year (legacy entries without a start date fall back to their
+      // original single-amount behavior so nothing already logged disappears).
       var rentalList = entries['rental'] || [];
       var otherList = entries['other_income'] || [];
       var rentalIncome = 0, rentalInterest = 0, rentalMisc = 0;
       rentalList.forEach(function (e) {
-        var amt = parseFloat(e.amount) || 0;
         var kind = e.kind === 'interest' || e.kind === 'misc' ? e.kind : 'income';
-        if (kind === 'income') rentalIncome += amt; else if (kind === 'interest') rentalInterest += amt; else rentalMisc += amt;
-        if (e.savedAs) attachmentCount++;
+        if (e.dueDate) {
+          var occs = generateOccurrences(e).filter(function (o) { return o.year === assessmentYear; });
+          var amt = occs.reduce(function (a, o) { return a + o.amount; }, 0);
+          if (kind === 'income') rentalIncome += amt; else if (kind === 'interest') rentalInterest += amt; else rentalMisc += amt;
+          occs.forEach(function (o) {
+            if (o.date > today) return;
+            if (o.savedAs) { attachmentCount++; return; }
+            if (o.amount > 0 && !o.receiptExempt) missingReceipts.push({ id: e.id + '_' + o.key, entryId: e.id, occKey: o.key, catId: 'rental', name: (e.name || 'Rental entry') + ' · ' + o.label, where: 'Rental & loan interest', amount: o.amount });
+          });
+        } else {
+          var legacyAmt = parseFloat(e.amount) || 0;
+          if (kind === 'income') rentalIncome += legacyAmt; else if (kind === 'interest') rentalInterest += legacyAmt; else rentalMisc += legacyAmt;
+          if (e.savedAs) attachmentCount++;
+          else if (legacyAmt > 0 && !e.receiptExempt) missingReceipts.push({ id: e.id, entryId: e.id, occKey: null, catId: 'rental', name: e.name || 'Rental entry', where: 'Rental & loan interest', amount: legacyAmt });
+        }
       });
       var rentalNet = Math.max(0, rentalIncome - rentalInterest - rentalMisc);
       var otherNet = 0;
       otherList.forEach(function (e) { otherNet += (parseFloat(e.amount) || 0); });
       var totalOtherIncome = rentalNet + otherNet;
 
+      // ---- personal finance: bills, passive income, investment contributions, portfolio ----
+      // (only entries currently within their start/end window count toward the steady-state monthly figures —
+      // a bill that has already ended, or hasn't started yet, shouldn't inflate "monthly expenditure")
+      var monthlyExpenditure = billsList.reduce(function (a, e) { return a + (isActiveNow(e, today) ? monthlyEquivalent(e) : 0); }, 0);
+      // rental income (recurring entries only — a legacy one-off entry has no ongoing monthly rate to speak
+      // of) counts toward the same "monthly income" figure as passive income, since to the person living off
+      // it, rent coming in every month is no different from a dividend or royalty payment.
+      var monthlyRentalIncome = rentalList.filter(function (e) { return (e.kind || 'income') === 'income' && e.dueDate; })
+        .reduce(function (a, e) { return a + (isActiveNow(e, today) ? monthlyEquivalent(e) : 0); }, 0);
+      var monthlyPassiveIncome = incomeList.reduce(function (a, e) { return a + (isActiveNow(e, today) ? monthlyEquivalent(e) : 0); }, 0) + monthlyRentalIncome;
+      // every rental-income entry, shown read-only inside the Passive income card so it's visibly counted
+      // there too, not just folded silently into the total — edit the actual entry back on the Tax tab.
+      var rentalIncomeLinked = rentalList.filter(function (e) { return (e.kind || 'income') === 'income'; }).map(function (e) {
+        var monthlyAmt = e.dueDate ? monthlyEquivalent(e) : null;
+        var active = e.dueDate ? isActiveNow(e, today) : true;
+        return {
+          id: e.id, name: e.name || 'Rental income',
+          freqLabel: e.dueDate ? freqLabelOf(e.freq) : 'One-off (' + (e.month || '-') + ' ' + (e.year || '-') + ')',
+          monthlyFmt: e.dueDate ? (active ? fmtRM(monthlyAmt) + '/mo' : 'inactive') : fmtRM(parseFloat(e.amount) || 0)
+        };
+      });
+      var monthlyInvestContrib = investContribList.reduce(function (a, e) { return a + (isActiveNow(e, today) ? monthlyEquivalent(e) : 0); }, 0);
+      var netMonthlyCashFlow = monthlyPassiveIncome - monthlyExpenditure - monthlyInvestContrib;
+
+      // receipts are tracked per occurrence now — only occurrences that have actually happened (date <= today)
+      // can be missing a receipt; future ones simply haven't come due yet.
+      billsList.forEach(function (e) {
+        generateOccurrences(e).forEach(function (o) {
+          if (o.date > today) return;
+          if (o.savedAs) { attachmentCount++; return; }
+          if (o.amount > 0 && !o.receiptExempt) missingReceipts.push({ id: e.id + '_' + o.key, entryId: e.id, occKey: o.key, catId: 'bills', name: (e.name || 'Bill') + ' · ' + o.label, where: 'Bills & Income', amount: o.amount });
+        });
+      });
+      investContribList.forEach(function (e) {
+        generateOccurrences(e).forEach(function (o) {
+          if (o.date > today) return;
+          if (o.savedAs) { attachmentCount++; return; }
+          if (o.amount > 0 && !o.receiptExempt) missingReceipts.push({ id: e.id + '_' + o.key, entryId: e.id, occKey: o.key, catId: 'invest_contrib', name: (e.name || 'Investment') + ' · ' + o.label, where: 'Investments', amount: o.amount });
+        });
+      });
+      incomeList.forEach(function (e) {
+        generateOccurrences(e).forEach(function (o) {
+          if (o.date > today) return;
+          if (o.savedAs) { attachmentCount++; return; }
+          if (o.amount > 0 && !o.receiptExempt) missingReceipts.push({ id: e.id + '_' + o.key, entryId: e.id, occKey: o.key, catId: 'passive_income', name: (e.name || 'Income') + ' · ' + o.label, where: 'Passive income', amount: o.amount });
+        });
+      });
+
+      var portfolioTotalValue = portfolioList.reduce(function (a, e) { return a + (parseFloat(e.currentValue) || 0); }, 0);
+      var portfolioTotalCost = portfolioList.reduce(function (a, e) { return a + (parseFloat(e.costBasis) || 0); }, 0);
+      var portfolioGain = portfolioTotalValue - portfolioTotalCost;
+
+      var upcomingPayments = billsList.concat(investContribList).filter(function (e) { return e.dueDate; }).map(function (e) {
+        var d = nextOccurrence(e, today);
+        return d ? { entry: e, date: d, days: daysUntil(d, today), source: billsList.indexOf(e) >= 0 ? 'Bill' : 'Investment' } : null;
+      }).filter(Boolean).sort(function (a, b) { return a.date - b.date; }).slice(0, 8);
+
+      // ---- payments vs investments, split apart: year-to-date paid so far and full year-end expected total,
+      // both scoped strictly to the current calendar year (an occurrence dated into a different year never
+      // leaks into this year's figures — each year gets its own correctly attributed total).
+      var curYear = today.getFullYear();
+      var paymentsBreakdown = billsList.map(function (e) {
+        var r = ytdAndExpected(e, curYear, today);
+        return { entry: e, name: e.name || 'Bill', ytd: r.ytd, yearEnd: r.yearEnd };
+      }).filter(function (p) { return p.yearEnd > 0 || p.ytd > 0; });
+      var investmentsBreakdown = investContribList.map(function (e) {
+        var r = ytdAndExpected(e, curYear, today);
+        return { entry: e, name: e.name || 'Investment', ytd: r.ytd, yearEnd: r.yearEnd };
+      }).filter(function (p) { return p.yearEnd > 0 || p.ytd > 0; });
+      var paymentsYTD = paymentsBreakdown.reduce(function (a, p) { return a + p.ytd; }, 0);
+      var paymentsYearEnd = paymentsBreakdown.reduce(function (a, p) { return a + p.yearEnd; }, 0);
+      var investmentsYTD = investmentsBreakdown.reduce(function (a, p) { return a + p.ytd; }, 0);
+      var investmentsYearEnd = investmentsBreakdown.reduce(function (a, p) { return a + p.yearEnd; }, 0);
+
       return {
         grand: grand, unclaimed: unclaimed, fullyUsedCount: fullyUsedCount, categoriesView: categoriesView,
         enabledCategoriesView: enabledCategoriesView, topOpportunities: topOpportunities,
         rentalList: rentalList, otherList: otherList, rentalIncome: rentalIncome, rentalInterest: rentalInterest,
         rentalMisc: rentalMisc, rentalNet: rentalNet, otherNet: otherNet, totalOtherIncome: totalOtherIncome,
-        attachmentCount: attachmentCount, categoriesWithEntriesCount: categoriesWithEntriesCount
+        attachmentCount: attachmentCount, categoriesWithEntriesCount: categoriesWithEntriesCount,
+        billsList: billsList, incomeList: incomeList, investContribList: investContribList, portfolioList: portfolioList,
+        monthlyExpenditure: monthlyExpenditure, monthlyPassiveIncome: monthlyPassiveIncome, monthlyRentalIncome: monthlyRentalIncome,
+        rentalIncomeLinked: rentalIncomeLinked,
+        monthlyInvestContrib: monthlyInvestContrib,
+        netMonthlyCashFlow: netMonthlyCashFlow, portfolioTotalValue: portfolioTotalValue, portfolioTotalCost: portfolioTotalCost,
+        portfolioGain: portfolioGain, upcomingPayments: upcomingPayments, missingReceipts: missingReceipts,
+        curYear: curYear, paymentsBreakdown: paymentsBreakdown, investmentsBreakdown: investmentsBreakdown,
+        paymentsYTD: paymentsYTD, paymentsYearEnd: paymentsYearEnd, investmentsYTD: investmentsYTD, investmentsYearEnd: investmentsYearEnd
       };
-    }, [entries, disabledCats]);
+    }, [entries, disabledCats, assessmentYear]);
 
     function resetAll() {
-      if (window.confirm('Clear all saved entries? This cannot be undone. Files already written to your folder are kept.')) {
+      if (window.confirm('Clear all saved entries — tax relief AND personal finance (bills, income, investments, portfolio)? This cannot be undone. Files already written to your folder are kept.')) {
         localStorage.removeItem(STORAGE_KEY);
         setEntries({}); setTaxpayerName(''); setLastSavedAt(null); setExportDone(false); setDisabledCats({});
-        setMaritalStatusRaw(null); setHasKidsRaw(null);
+        setMaritalStatusRaw(null); setHasKidsRaw(null); setAmountsHidden(false);
         showToast('All entries cleared.');
       }
     }
 
     function exportJSON() {
       var payload = {
-        __app: 'my_tax_relief_inventory', __version: 2, entries: entries, taxpayerName: taxpayerName,
-        assessmentYear: assessmentYear, disabledCats: disabledCats, maritalStatus: maritalStatus, hasKids: hasKids, savedAt: Date.now()
+        __app: 'my_tax_relief_inventory', __version: 3, entries: entries, taxpayerName: taxpayerName,
+        assessmentYear: assessmentYear, disabledCats: disabledCats, maritalStatus: maritalStatus, hasKids: hasKids,
+        amountsHidden: amountsHidden, savedAt: Date.now()
       };
       var blob = new Blob([JSON.stringify(payload, null, 2)], { type: 'application/json' });
       var url = URL.createObjectURL(blob);
       var a = document.createElement('a');
-      var fname = 'Tax_Relief_Data_YA' + assessmentYear + '.json';
+      var fname = 'Tax_And_Finance_Data_YA' + assessmentYear + '.json';
       a.href = url; a.download = fname; document.body.appendChild(a); a.click(); a.remove();
       URL.revokeObjectURL(url);
       showToast('Downloaded ' + fname + ' — carry it to another device and import it there.');
@@ -1023,17 +1627,25 @@ var o=[];var l=Array.isArray(e);for(f=n.s.c;f<=n.e.c;++f)s[f]=ya(f);for(var c=n.
       reader.onload = function () {
         var data;
         try { data = JSON.parse(reader.result); } catch (e) { showToast('That file is not valid JSON.'); return; }
-        if (!data || typeof data !== 'object' || typeof data.entries !== 'object') { showToast('That file does not look like a Tax Relief Inventory backup.'); return; }
-        if (!window.confirm('Import this file? It will replace all entries currently on this device.')) return;
+        if (!data || typeof data !== 'object' || typeof data.entries !== 'object') { showToast('That file does not look like a Tax Relief / Finance backup.'); return; }
+        if (!window.confirm('Import this file? It will replace all entries currently on this device (tax relief and personal finance).')) return;
         setEntries(data.entries || {});
         setTaxpayerName(data.taxpayerName || '');
         setAssessmentYear(data.assessmentYear || defaultYear);
         setDisabledCats(data.disabledCats || {});
         setMaritalStatusRaw(data.maritalStatus || null);
         setHasKidsRaw(data.hasKids === true || data.hasKids === false ? data.hasKids : null);
+        setAmountsHidden(!!data.amountsHidden);
         showToast('Data imported. Receipts still live in your chosen folder on the device that attached them.');
       };
       reader.readAsText(file);
+    }
+
+    function downloadICS(rows, label) {
+      var text = buildICS(rows, label);
+      if (!text) { showToast('Add a payment date first.'); return; }
+      downloadText(text, (rows.length > 1 ? 'Reminders' : sanitize((rows[0].name || label))) + '.ics', 'text/calendar');
+      showToast('Downloaded — import the .ics file into Google Calendar (Settings → Import) or double-click to add it to Outlook/Apple Calendar.');
     }
 
     function generateExport() {
@@ -1042,31 +1654,44 @@ var o=[];var l=Array.isArray(e);for(f=n.s.c;f<=n.e.c;++f)s[f]=ya(f);for(var c=n.
       setExporting(true); setExportDone(false);
       try {
         var year = assessmentYear;
+        var exportToday = new Date(); exportToday.setHours(0, 0, 0, 0);
         var rows = [['Category', 'Subtopic', 'Enabled', 'Cap (RM)', 'Entry #', 'Name', 'Amount (RM)', 'Month', 'Year', 'Attachment']];
         rows.push([FIXED_CAT.name, '-', 'Yes', FIXED_CAT.cap, '-', '-', FIXED_CAT.cap, '-', '-', 'Automatic (no receipt required)']);
 
         var zip = new JSZip();
         var folder = zip.folder('attachments');
         var filePromises = [];
-        var grand = FIXED_CAT.cap;
+        var grand = derived.grand;
         var overviewRows = [['Category', 'Claimed (RM)', 'Cap (RM)']];
         overviewRows.push([FIXED_CAT.name, FIXED_CAT.cap, FIXED_CAT.cap]);
 
-        VARIABLE_CATS.forEach(function (cat) {
-          var enabled = !disabledCats[cat.id];
-          var list = entries[cat.id] || [];
-          var raw = list.reduce(function (a, e) { return a + (parseFloat(e.amount) || 0); }, 0);
-          var capped = Math.min(raw, cat.cap);
-          if (enabled) { grand += capped; overviewRows.push([cat.name, capped, cat.cap]); }
-          if (list.length === 0) {
+        derived.categoriesView.forEach(function (cv) {
+          var cat = cv.cat, enabled = cv.enabled, list = entries[cat.id] || [];
+          if (enabled) overviewRows.push([cat.name, cv.capped, cat.cap]);
+          if (list.length === 0 && cv.linked.length === 0) {
             rows.push([cat.name, '-', enabled ? 'Yes' : 'No', cat.cap, '-', '-', 0, '-', '-', 'No entries']);
           } else {
             list.forEach(function (e, i) {
               var subtopic = e.subtopic && cat.subtopics.indexOf(e.subtopic) >= 0 ? e.subtopic : cat.subtopics[0];
-              rows.push([cat.name, subtopic, enabled ? 'Yes' : 'No', cat.cap, i + 1, e.name || '-', (parseFloat(e.amount) || 0), e.month, e.year, e.savedAs || 'No receipt']);
-              if (e.savedAs && dirHandleRef.current) {
-                filePromises.push(dirHandleRef.current.getFileHandle(e.savedAs).then(function (fh) { return fh.getFile(); }).then(function (f) { folder.file(e.savedAs, f); }).catch(function () { }));
+              var bundled = cat.id === 'edu_medical_insurance' && subtopic === 'MedInsur' && (parseFloat(e.lifeAmount) || 0) > 0;
+              var nameNote = e.name || '-';
+              if (bundled) nameNote += ' (60% — bundled w/ life)';
+              if (cat.id === 'edu_medical_insurance' && e.dueDate) {
+                generateOccurrences(e).filter(function (o) { return o.year === year; }).forEach(function (o) {
+                  rows.push([cat.name, subtopic, enabled ? 'Yes' : 'No', cat.cap, i + 1, nameNote, reliefCountedAmount(cat, e, o.amount), '-', o.year, o.savedAs || (o.date <= exportToday ? 'No receipt' : '-')]);
+                  if (o.savedAs && dirHandleRef.current) {
+                    filePromises.push(dirHandleRef.current.getFileHandle(o.savedAs).then(function (fh) { return fh.getFile(); }).then(function (f) { folder.file(o.savedAs, f); }).catch(function () { }));
+                  }
+                });
+              } else {
+                rows.push([cat.name, subtopic, enabled ? 'Yes' : 'No', cat.cap, i + 1, nameNote, reliefCountedAmount(cat, e, parseFloat(e.amount) || 0), e.month, e.year, e.savedAs || 'No receipt']);
+                if (e.savedAs && dirHandleRef.current) {
+                  filePromises.push(dirHandleRef.current.getFileHandle(e.savedAs).then(function (fh) { return fh.getFile(); }).then(function (f) { folder.file(e.savedAs, f); }).catch(function () { }));
+                }
               }
+            });
+            cv.linked.forEach(function (l) {
+              rows.push([cat.name, 'Linked · ' + l.freqLabel, enabled ? 'Yes' : 'No', cat.cap, '-', (l.name || '-') + ' (from ' + (l.source === 'bills' ? 'Bills & Income' : 'Investments') + ')', l.annualAmount, '-', year, 'See Bills/Investments sheet']);
             });
           }
         });
@@ -1076,32 +1701,122 @@ var o=[];var l=Array.isArray(e);for(f=n.s.c;f<=n.e.c;++f)s[f]=ya(f);for(var c=n.
         overviewRows.push([]);
         overviewRows.push(['TOTAL RELIEF CLAIMED', '', grand]);
 
-        var incomeRows = [['Source', 'Entry #', 'Name', 'Type', 'Amount (RM)', 'Month', 'Year', 'Attachment']];
+        var incomeRows = [['Source', 'Entry #', 'Name', 'Type', 'Occurrence', 'Amount (RM)', 'Attachment']];
         var kindLabelsX = { income: 'Rental income', interest: 'Loan interest', misc: 'Misc deductible' };
-        var totalIncome = 0, totalInterest = 0, totalMisc = 0, totalOther = 0;
+        var totalOther = 0;
         (entries['rental'] || []).forEach(function (e, i) {
-          var amt = parseFloat(e.amount) || 0;
           var kind = e.kind === 'interest' || e.kind === 'misc' ? e.kind : 'income';
-          if (kind === 'income') totalIncome += amt; else if (kind === 'interest') totalInterest += amt; else totalMisc += amt;
-          incomeRows.push(['Rental / interest', i + 1, e.name || '-', kindLabelsX[kind], amt, e.month, e.year, e.savedAs || 'No receipt']);
-          if (e.savedAs && dirHandleRef.current) {
-            filePromises.push(dirHandleRef.current.getFileHandle(e.savedAs).then(function (fh) { return fh.getFile(); }).then(function (f) { folder.file(e.savedAs, f); }).catch(function () { }));
+          if (e.dueDate) {
+            generateOccurrences(e).filter(function (o) { return o.year === year; }).forEach(function (o) {
+              incomeRows.push(['Rental / interest', i + 1, e.name || '-', kindLabelsX[kind], o.label, o.amount, o.savedAs || (o.date <= exportToday ? 'No receipt' : '-')]);
+              if (o.savedAs && dirHandleRef.current) {
+                filePromises.push(dirHandleRef.current.getFileHandle(o.savedAs).then(function (fh) { return fh.getFile(); }).then(function (f) { folder.file(o.savedAs, f); }).catch(function () { }));
+              }
+            });
+          } else {
+            var amt = parseFloat(e.amount) || 0;
+            incomeRows.push(['Rental / interest', i + 1, e.name || '-', kindLabelsX[kind], (e.month || '-') + ' ' + (e.year || '-'), amt, e.savedAs || 'No receipt']);
+            if (e.savedAs && dirHandleRef.current) {
+              filePromises.push(dirHandleRef.current.getFileHandle(e.savedAs).then(function (fh) { return fh.getFile(); }).then(function (f) { folder.file(e.savedAs, f); }).catch(function () { }));
+            }
           }
         });
         (entries['other_income'] || []).forEach(function (e, i) {
           var amt = parseFloat(e.amount) || 0;
           totalOther += amt;
-          incomeRows.push(['Other side income', i + 1, e.name || '-', 'Other income', amt, e.month, e.year, '-']);
+          incomeRows.push(['Other side income', i + 1, e.name || '-', 'Other income', (e.month || '-') + ' ' + (e.year || '-'), amt, '-']);
         });
+        var totalIncome = derived.rentalIncome, totalInterest = derived.rentalInterest, totalMisc = derived.rentalMisc;
         var totalOtherIncome = Math.max(0, totalIncome - totalInterest - totalMisc) + totalOther;
         incomeRows.push([]);
-        incomeRows.push(['Rental income', '', '', '', totalIncome, '', '', '']);
-        incomeRows.push(['Loan interest deducted', '', '', '', -totalInterest, '', '', '']);
-        incomeRows.push(['Misc deductibles', '', '', '', -totalMisc, '', '', '']);
-        incomeRows.push(['TOTAL OTHER INCOME', '', '', '', totalOtherIncome, '', '', '']);
+        incomeRows.push(['Rental income', '', '', '', '', totalIncome, '']);
+        incomeRows.push(['Loan interest deducted', '', '', '', '', -totalInterest, '']);
+        incomeRows.push(['Misc deductibles', '', '', '', '', -totalMisc, '']);
+        incomeRows.push(['TOTAL OTHER INCOME', '', '', '', '', totalOtherIncome, '']);
 
         overviewRows.push([]);
         overviewRows.push(['TOTAL OTHER INCOME (net)', '', totalOtherIncome]);
+        overviewRows.push(['Expected monthly expenditure', '', derived.monthlyExpenditure]);
+        overviewRows.push(['Expected monthly income (passive + rental)', '', derived.monthlyPassiveIncome]);
+
+        // bills & investments are exported per OCCURRENCE (this year only) — one row per individual payment,
+        // each with its own paid/upcoming status and receipt, matching how they're tracked in the app now.
+        var billsRows = [['Name', 'Category', 'Occurrence', 'Amount (RM)', 'Status', 'Linked tax relief', 'Attachment']];
+        derived.billsList.forEach(function (e) {
+          var linkName = e.taxLink ? (VARIABLE_CATS.filter(function (c) { return c.id === e.taxLink; })[0] || {}).name || '' : '';
+          var occs = generateOccurrences(e).filter(function (o) { return o.year === derived.curYear; });
+          if (!occs.length) {
+            billsRows.push([e.name || '-', e.category || '-', '(no occurrences in ' + derived.curYear + ')', 0, '-', linkName || '-', '-']);
+          }
+          occs.forEach(function (o) {
+            var status = o.date <= exportToday ? 'Paid / occurred' : 'Upcoming';
+            billsRows.push([e.name || '-', e.category || '-', o.label, o.amount, status, linkName || '-', o.savedAs || (o.date <= exportToday ? 'No receipt' : '-')]);
+            if (o.savedAs && dirHandleRef.current) {
+              filePromises.push(dirHandleRef.current.getFileHandle(o.savedAs).then(function (fh) { return fh.getFile(); }).then(function (f) { folder.file(o.savedAs, f); }).catch(function () { }));
+            }
+          });
+        });
+        billsRows.push([]);
+        billsRows.push(['TOTAL PAID YTD (' + derived.curYear + ')', '', '', derived.paymentsYTD, '', '', '']);
+        billsRows.push(['TOTAL EXPECTED YEAR-END (' + derived.curYear + ')', '', '', derived.paymentsYearEnd, '', '', '']);
+
+        // passive income is exported per OCCURRENCE (this year only) too, same as bills/investments, so each
+        // individual payment's receipt (if any) travels with it into the ZIP.
+        var incomeRows2 = [['Name', 'Source', 'Occurrence', 'Amount (RM)', 'Status', 'Attachment']];
+        derived.incomeList.forEach(function (e) {
+          var occs = generateOccurrences(e).filter(function (o) { return o.year === derived.curYear; });
+          if (!occs.length) {
+            incomeRows2.push([e.name || '-', e.category || '-', '(no occurrences in ' + derived.curYear + ')', 0, '-', '-']);
+          }
+          occs.forEach(function (o) {
+            var status = o.date <= exportToday ? 'Received' : 'Upcoming';
+            incomeRows2.push([e.name || '-', e.category || '-', o.label, o.amount, status, o.savedAs || (o.date <= exportToday ? 'No receipt' : '-')]);
+            if (o.savedAs && dirHandleRef.current) {
+              filePromises.push(dirHandleRef.current.getFileHandle(o.savedAs).then(function (fh) { return fh.getFile(); }).then(function (f) { folder.file(o.savedAs, f); }).catch(function () { }));
+            }
+          });
+        });
+        incomeRows2.push([]);
+        incomeRows2.push(['TOTAL MONTHLY PASSIVE INCOME (steady-state)', '', '', derived.monthlyPassiveIncome, '', '']);
+
+        var investRows = [['Name', 'Occurrence', 'Amount (RM)', 'Status', 'Linked tax relief', 'Attachment']];
+        derived.investContribList.forEach(function (e) {
+          var linkName = e.taxLink ? (VARIABLE_CATS.filter(function (c) { return c.id === e.taxLink; })[0] || {}).name || '' : '';
+          var occs = generateOccurrences(e).filter(function (o) { return o.year === derived.curYear; });
+          if (!occs.length) {
+            investRows.push([e.name || '-', '(no occurrences in ' + derived.curYear + ')', 0, '-', linkName || '-', '-']);
+          }
+          occs.forEach(function (o) {
+            var status = o.date <= exportToday ? 'Paid / occurred' : 'Upcoming';
+            investRows.push([e.name || '-', o.label, o.amount, status, linkName || '-', o.savedAs || (o.date <= exportToday ? 'No receipt' : '-')]);
+            if (o.savedAs && dirHandleRef.current) {
+              filePromises.push(dirHandleRef.current.getFileHandle(o.savedAs).then(function (fh) { return fh.getFile(); }).then(function (f) { folder.file(o.savedAs, f); }).catch(function () { }));
+            }
+          });
+        });
+        investRows.push([]);
+        investRows.push(['TOTAL INVESTED YTD (' + derived.curYear + ')', '', derived.investmentsYTD, '', '', '']);
+        investRows.push(['TOTAL EXPECTED YEAR-END (' + derived.curYear + ')', '', derived.investmentsYearEnd, '', '', '']);
+
+        var portfolioRows = [['Holding', 'Type', 'Current value (RM)', 'Cost basis (RM)', 'Gain/Loss (RM)', 'Notes']];
+        derived.portfolioList.forEach(function (e) {
+          var cv = parseFloat(e.currentValue) || 0, cb = parseFloat(e.costBasis) || 0;
+          portfolioRows.push([e.name || '-', e.type || '-', cv, cb, cv - cb, e.notes || '']);
+        });
+        portfolioRows.push([]);
+        portfolioRows.push(['TOTAL PORTFOLIO VALUE', '', derived.portfolioTotalValue, derived.portfolioTotalCost, derived.portfolioGain, '']);
+
+        overviewRows.push([]);
+        overviewRows.push(['PERSONAL FINANCE', '', '']);
+        overviewRows.push(['Monthly expenditure (bills)', '', derived.monthlyExpenditure]);
+        overviewRows.push(['Monthly passive income', '', derived.monthlyPassiveIncome]);
+        overviewRows.push(['Monthly investment contributions', '', derived.monthlyInvestContrib]);
+        overviewRows.push(['Net monthly cash flow', '', derived.netMonthlyCashFlow]);
+        overviewRows.push(['Payments paid YTD (' + derived.curYear + ')', '', derived.paymentsYTD]);
+        overviewRows.push(['Payments expected year-end (' + derived.curYear + ')', '', derived.paymentsYearEnd]);
+        overviewRows.push(['Investments contributed YTD (' + derived.curYear + ')', '', derived.investmentsYTD]);
+        overviewRows.push(['Investments expected year-end (' + derived.curYear + ')', '', derived.investmentsYearEnd]);
+        overviewRows.push(['Investment portfolio total value', '', derived.portfolioTotalValue]);
 
         Promise.all(filePromises).then(function () {
           var currencyFmt = function (ws, colLetters, fromRow, toRow) {
@@ -1125,14 +1840,34 @@ var o=[];var l=Array.isArray(e);for(f=n.s.c;f<=n.e.c;++f)s[f]=ya(f);for(var c=n.
           XLSX.utils.book_append_sheet(wb, ws, 'Tax Relief Detail');
 
           var wsIncome = XLSX.utils.aoa_to_sheet(incomeRows);
-          wsIncome['!cols'] = [{ wch: 20 }, { wch: 8 }, { wch: 12 }, { wch: 14 }, { wch: 12 }, { wch: 7 }, { wch: 7 }, { wch: 45 }];
-          currencyFmt(wsIncome, ['E'], 2, incomeRows.length);
+          wsIncome['!cols'] = [{ wch: 20 }, { wch: 8 }, { wch: 16 }, { wch: 14 }, { wch: 14 }, { wch: 12 }, { wch: 45 }];
+          currencyFmt(wsIncome, ['F'], 2, incomeRows.length);
           XLSX.utils.book_append_sheet(wb, wsIncome, 'Other Income');
 
-          var xlsxArray = XLSX.write(wb, { bookType: 'xlsx', type: 'array' });
-          zip.file('Tax_Relief_Summary_YA' + year + '.xlsx', xlsxArray);
+          var wsBills = XLSX.utils.aoa_to_sheet(billsRows);
+          wsBills['!cols'] = [{ wch: 20 }, { wch: 14 }, { wch: 16 }, { wch: 12 }, { wch: 14 }, { wch: 26 }, { wch: 40 }];
+          currencyFmt(wsBills, ['D'], 2, billsRows.length);
+          XLSX.utils.book_append_sheet(wb, wsBills, 'Bills');
 
-          var zipName = 'Malaysia_Tax_Inventory_YA' + year + '.zip';
+          var wsIncome2 = XLSX.utils.aoa_to_sheet(incomeRows2);
+          wsIncome2['!cols'] = [{ wch: 20 }, { wch: 16 }, { wch: 14 }, { wch: 12 }, { wch: 12 }, { wch: 40 }];
+          currencyFmt(wsIncome2, ['D'], 2, incomeRows2.length);
+          XLSX.utils.book_append_sheet(wb, wsIncome2, 'Passive Income');
+
+          var wsInvest = XLSX.utils.aoa_to_sheet(investRows);
+          wsInvest['!cols'] = [{ wch: 20 }, { wch: 16 }, { wch: 12 }, { wch: 14 }, { wch: 26 }, { wch: 40 }];
+          currencyFmt(wsInvest, ['C'], 2, investRows.length);
+          XLSX.utils.book_append_sheet(wb, wsInvest, 'Investment Contributions');
+
+          var wsPortfolio = XLSX.utils.aoa_to_sheet(portfolioRows);
+          wsPortfolio['!cols'] = [{ wch: 22 }, { wch: 14 }, { wch: 16 }, { wch: 14 }, { wch: 14 }, { wch: 30 }];
+          currencyFmt(wsPortfolio, ['C', 'D', 'E'], 2, portfolioRows.length);
+          XLSX.utils.book_append_sheet(wb, wsPortfolio, 'Investment Portfolio');
+
+          var xlsxArray = XLSX.write(wb, { bookType: 'xlsx', type: 'array' });
+          zip.file('Tax_And_Finance_Summary_YA' + year + '.xlsx', xlsxArray);
+
+          var zipName = 'Malaysia_Tax_And_Finance_YA' + year + '.zip';
           return zip.generateAsync({ type: 'blob' }).then(function (blob) {
             var url = URL.createObjectURL(blob);
             var a = document.createElement('a');
@@ -1157,12 +1892,19 @@ var o=[];var l=Array.isArray(e);for(f=n.s.c;f<=n.e.c;++f)s[f]=ya(f);for(var c=n.
       return { name: g.name, cats: visible };
     }).filter(function (g) { return g.cats.length > 0; });
 
+    var goFinance = function (source) { setTab(source === 'bills' ? 'bills' : 'invest'); };
+
     return h('div', { className: containerClass },
-      h(Header, { assessmentYear: assessmentYear, grandTotalFmt: fmtRM(derived.grand), totalOtherIncomeFmt: fmtRM(derived.totalOtherIncome), lastSavedAt: lastSavedAt }),
+      h(Header, {
+        assessmentYear: assessmentYear, grandTotalFmt: R(derived.grand), amountsHidden: amountsHidden,
+        onToggleHidden: function () { setAmountsHidden(function (v) { return !v; }); },
+        netCashFlowFmt: (derived.netMonthlyCashFlow < 0 ? '-' : '') + R(Math.abs(derived.netMonthlyCashFlow)) + '/mo',
+        netCashFlowNegative: derived.netMonthlyCashFlow < 0, lastSavedAt: lastSavedAt
+      }),
       h('div', { style: { flex: 1, overflowY: 'auto', padding: '16px', paddingBottom: 96, display: 'flex', flexDirection: 'column', gap: 12 } },
         tab === 'criteria' && h(CriteriaTab, {
           showDisclaimer: showDisclaimer, folderMissing: !folderName, folderNeedsReconnect: folderNeedsReconnect,
-          goData: function () { setTab('data'); }, fixedCat: FIXED_CAT,
+          goData: function () { setTab('data'); }, goFinance: goFinance, fixedCat: FIXED_CAT, assessmentYear: assessmentYear,
           rentalList: derived.rentalList, rentalIncome: derived.rentalIncome, rentalInterest: derived.rentalInterest,
           rentalMisc: derived.rentalMisc, rentalNet: derived.rentalNet,
           otherList: derived.otherList, otherNet: derived.otherNet,
@@ -1176,16 +1918,63 @@ var o=[];var l=Array.isArray(e);for(f=n.s.c;f<=n.e.c;++f)s[f]=ya(f);for(var c=n.
           onEntryChange: updateEntryFields, onEntryRemove: removeEntry, onEntryDuplicate: duplicateEntry,
           onEntryAdd: addEntry,
           onAttachRental: function (id, file) { var e = findEntry('rental', id); if (e) attachFile('rental', e, (e.kind === 'interest' ? 'Loan interest' : e.kind === 'misc' ? 'Misc deductible' : 'Rental income'), file); },
+          onAttachRentalOccurrence: function (row, occKey, file) { attachOccurrenceFile('rental', row, (row.kind === 'interest' ? 'Loan interest' : row.kind === 'misc' ? 'Misc deductible' : 'Rental income'), occKey, file); },
+          onToggleRentalOccExempt: function (row, occKey, val) { toggleOccurrenceExempt('rental', row, occKey, val); },
+          onIcsRental: function (row) { downloadICS([row], row.kind === 'interest' ? 'Loan interest' : row.kind === 'misc' ? 'Misc deductible' : 'Rental income'); },
+          onIcsRentalAll: function () { downloadICS(derived.rentalList.filter(function (e) { return e.dueDate; }), 'Rental & loan interest'); },
           onAttachCat: function (catId, id, file) { var e = findEntry(catId, id); if (e) attachFile(catId, e, e.subtopic || catId, file); },
+          onAttachCatOccurrence: function (catId, row, occKey, file) { attachOccurrenceFile(catId, row, row.subtopic || catId, occKey, file); },
+          onToggleCatOccExempt: function (catId, row, occKey, val) { toggleOccurrenceExempt(catId, row, occKey, val); },
+          onIcsCat: function (row) { downloadICS([row], row.subtopic || 'Relief'); },
           maritalStatus: maritalStatus, setMaritalStatus: setMaritalStatus, hasKids: hasKids, setHasKids: setHasKids
         }),
-        tab === 'summary' && h(SummaryTab, {
-          grandTotalFmt: fmtRM(derived.grand), unclaimedFmt: fmtRM(derived.unclaimed), fullyUsedCount: derived.fullyUsedCount,
+        tab === 'bills' && h(BillsIncomeTab, {
+          billsList: derived.billsList, incomeList: derived.incomeList, monthlyExpenditure: R(derived.monthlyExpenditure),
+          monthlyPassiveIncome: R(derived.monthlyPassiveIncome), rentalIncomeLinked: derived.rentalIncomeLinked,
+          onChange: updateEntryFields, onRemove: removeEntry, onDuplicate: duplicateEntry,
+          onAdd: addEntry,
+          onAttachOccurrence: function (catId, row, occKey, file) { attachOccurrenceFile(catId, row, catId === 'passive_income' ? 'Income' : 'Bill', occKey, file); },
+          onToggleOccExempt: function (catId, row, occKey, val) { toggleOccurrenceExempt(catId, row, occKey, val); },
+          onIcs: function (row) { downloadICS([row], row.freq ? (row.category ? 'Bill' : 'Income') : 'Reminder'); },
+          onIcsAll: function () { downloadICS(derived.billsList.filter(function (e) { return e.dueDate; }), 'Bill'); },
+          goTax: function () { setTab('criteria'); }
+        }),
+        tab === 'invest' && h(InvestTab, {
+          investContribList: derived.investContribList, portfolioList: derived.portfolioList,
+          monthlyInvestContrib: R(derived.monthlyInvestContrib), portfolioTotalValueFmt: R(derived.portfolioTotalValue),
+          portfolioGainFmt: (derived.portfolioGain < 0 ? '-' : '+') + R(Math.abs(derived.portfolioGain)),
+          portfolioGainNegative: derived.portfolioGain < 0,
+          onChange: updateEntryFields, onRemove: removeEntry, onDuplicate: duplicateEntry, onAdd: addEntry,
+          onAttachOccurrence: function (catId, row, occKey, file) { attachOccurrenceFile(catId, row, 'Investment', occKey, file); },
+          onToggleOccExempt: function (catId, row, occKey, val) { toggleOccurrenceExempt(catId, row, occKey, val); },
+          onAttachPortfolio: function (id, file) { var e = findEntry('portfolio', id); if (e) attachFile('portfolio', e, e.name || 'Holding', file); },
+          onIcs: function (row) { downloadICS([row], 'Investment'); },
+          onIcsAll: function () { downloadICS(derived.investContribList.filter(function (e) { return e.dueDate; }), 'Investment'); }
+        }),
+        tab === 'dashboard' && h(DashboardTab, {
+          grandTotalFmt: R(derived.grand), unclaimedFmt: R(derived.unclaimed), fullyUsedCount: derived.fullyUsedCount,
           totalCatCount: derived.enabledCategoriesView.length, withRoomCount: derived.enabledCategoriesView.length - derived.fullyUsedCount,
           topOpportunities: derived.topOpportunities, enabledCategoriesView: derived.enabledCategoriesView, fixedCat: FIXED_CAT,
-          copiedId: copiedId, onCopy: copyValue,
-          rentalIncomeFmt: fmtRM(derived.rentalIncome), rentalInterestFmt: fmtRM(derived.rentalInterest), rentalMiscFmt: fmtRM(derived.rentalMisc),
-          otherIncomeNetFmt: fmtRM(derived.otherNet), totalOtherIncomeFmt: fmtRM(derived.totalOtherIncome)
+          copiedId: copiedId, onCopy: copyValue, R: R,
+          rentalIncomeFmt: R(derived.rentalIncome), rentalInterestFmt: R(derived.rentalInterest), rentalMiscFmt: R(derived.rentalMisc),
+          otherIncomeNetFmt: R(derived.otherNet), totalOtherIncomeFmt: R(derived.totalOtherIncome),
+          monthlyExpenditureFmt: R(derived.monthlyExpenditure), monthlyPassiveIncomeFmt: R(derived.monthlyPassiveIncome),
+          monthlyRentalIncomeFmt: R(derived.monthlyRentalIncome),
+          monthlyInvestContribFmt: R(derived.monthlyInvestContrib),
+          netMonthlyCashFlowFmt: (derived.netMonthlyCashFlow < 0 ? '-' : '') + R(Math.abs(derived.netMonthlyCashFlow)),
+          netMonthlyCashFlowNegative: derived.netMonthlyCashFlow < 0,
+          portfolioTotalValueFmt: R(derived.portfolioTotalValue), portfolioGainFmt: R(Math.abs(derived.portfolioGain)),
+          portfolioGainNegative: derived.portfolioGain < 0,
+          upcomingPayments: derived.upcomingPayments, missingReceipts: derived.missingReceipts,
+          onExcludeReceipt: function (catId, entryId, occKey) {
+            if (occKey) { var e = findEntry(catId, entryId); if (e) toggleOccurrenceExempt(catId, e, occKey, true); }
+            else updateEntryFields(catId, entryId, 'receiptExempt', true);
+          },
+          curYear: derived.curYear, paymentsBreakdown: derived.paymentsBreakdown, investmentsBreakdown: derived.investmentsBreakdown,
+          paymentsYTDFmt: R(derived.paymentsYTD), paymentsYearEndFmt: R(derived.paymentsYearEnd),
+          investmentsYTDFmt: R(derived.investmentsYTD), investmentsYearEndFmt: R(derived.investmentsYearEnd),
+          goBills: function () { setTab('bills'); }, goInvest: function () { setTab('invest'); }, goTax: function () { setTab('criteria'); },
+          onIcsUpcoming: function (row) { downloadICS([row.entry], row.source); }
         }),
         tab === 'data' && h(DataTab, {
           folderName: folderName, folderNeedsReconnect: folderNeedsReconnect, chooseFolder: chooseFolder, reconnectFolder: reconnectFolder,
@@ -1195,10 +1984,11 @@ var o=[];var l=Array.isArray(e);for(f=n.s.c;f<=n.e.c;++f)s[f]=ya(f);for(var c=n.
           categoriesWithEntriesCount: derived.categoriesWithEntriesCount, attachmentCount: derived.attachmentCount,
           incomeEntriesCount: derived.rentalList.length + derived.otherList.length, totalOtherIncomeFmt: fmtRM(derived.totalOtherIncome),
           grandTotalFmt: fmtRM(derived.grand), exporting: exporting, exportDone: exportDone, exportZipName: exportZipName,
-          generateExport: generateExport, resetAll: resetAll
+          generateExport: generateExport, resetAll: resetAll,
+          missingReceiptsCount: derived.missingReceipts.length
         })
       ),
-      h(TabBar, { tab: tab, setTab: setTab }),
+      h(TabBar, { tab: tab, setTab: setTab, missingCount: derived.missingReceipts.length }),
       toast && h('div', { className: 'toast' }, toast)
     );
   }
@@ -1207,16 +1997,22 @@ var o=[];var l=Array.isArray(e);for(f=n.s.c;f<=n.e.c;++f)s[f]=ya(f);for(var c=n.
   function Header(props) {
     return h('div', { className: 'sticky-header' },
       h('div', { style: { display: 'flex', alignItems: 'center', justifyContent: 'space-between' } },
-        h('h4', { className: 'heading', style: { fontSize: 17 } }, 'Tax Relief Inventory'),
-        h('span', { className: 'badge badge-purple' }, 'YA ' + props.assessmentYear)
+        h('h4', { className: 'heading', style: { fontSize: 17 } }, 'Tax & Finance Tracker'),
+        h('div', { style: { display: 'flex', alignItems: 'center', gap: 6 } },
+          h('span', { className: 'badge badge-purple' }, 'YA ' + props.assessmentYear),
+          h('button', {
+            type: 'button', className: 'icon-btn', 'aria-label': props.amountsHidden ? 'Show amounts' : 'Hide amounts',
+            onClick: props.onToggleHidden, title: props.amountsHidden ? 'Show amounts' : 'Hide amounts'
+          }, Icon(props.amountsHidden ? 'eyeOff' : 'eye', { size: 17 }))
+        )
       ),
       h('div', { style: { display: 'flex', alignItems: 'baseline', justifyContent: 'space-between', gap: 10 } },
         h('span', { className: 'muted', style: { fontSize: 12 } }, 'Total relief claimed'),
         h('span', { className: 'heading pulse', style: { fontSize: 23, color: 'var(--green-dark)' } }, props.grandTotalFmt)
       ),
       h('div', { style: { display: 'flex', alignItems: 'baseline', justifyContent: 'space-between', gap: 10 } },
-        h('span', { className: 'muted', style: { fontSize: 11 } }, 'Other income (net)'),
-        h('span', { className: 'heading', style: { fontSize: 13, color: 'var(--purple)' } }, props.totalOtherIncomeFmt)
+        h('span', { className: 'muted', style: { fontSize: 11 } }, 'Monthly cash flow (income − bills − investing)'),
+        h('span', { className: 'heading', style: { fontSize: 13, color: props.netCashFlowNegative ? 'var(--coral)' : 'var(--purple)' } }, props.netCashFlowFmt)
       ),
       h('div', { style: { height: 1, marginTop: 6, background: 'var(--border)' } })
     );
@@ -1225,15 +2021,23 @@ var o=[];var l=Array.isArray(e);for(f=n.s.c;f<=n.e.c;++f)s[f]=ya(f);for(var c=n.
   // ---------------- tab bar ----------------
   function TabBar(props) {
     var items = [
-      { id: 'criteria', label: 'Criteria', icon: 'grid' },
-      { id: 'summary', label: 'Summary', icon: 'chart' },
+      { id: 'criteria', label: 'Tax', icon: 'grid' },
+      { id: 'bills', label: 'Bills', icon: 'wallet' },
+      { id: 'invest', label: 'Invest', icon: 'trend' },
+      { id: 'dashboard', label: 'Dashboard', icon: 'chart' },
       { id: 'data', label: 'Data', icon: 'folder' }
     ];
     return h('div', { className: 'navbar' }, items.map(function (it) {
       return h('button', {
         key: it.id, type: 'button', className: 'navbtn' + (props.tab === it.id ? ' active' : ''),
-        onClick: function () { props.setTab(it.id); }
-      }, Icon(it.icon, { size: 19 }), h('span', null, it.label));
+        onClick: function () { props.setTab(it.id); }, style: { position: 'relative' }
+      },
+        Icon(it.icon, { size: 19 }),
+        h('span', null, it.label),
+        (it.id === 'dashboard' && props.missingCount > 0) && h('span', {
+          style: { position: 'absolute', top: 4, right: '28%', background: 'var(--coral)', color: '#fff', borderRadius: 999, fontSize: 9, fontWeight: 700, padding: '1px 5px', lineHeight: 1.3 }
+        }, props.missingCount)
+      );
     }));
   }
 
@@ -1241,11 +2045,13 @@ var o=[];var l=Array.isArray(e);for(f=n.s.c;f<=n.e.c;++f)s[f]=ya(f);for(var c=n.
   function CriteriaTab(props) {
     var rentalColumns = [
       { key: 'kind', type: 'select', label: 'Type', options: [{ value: 'income', label: 'Rental income' }, { value: 'interest', label: 'Loan interest' }, { value: 'misc', label: 'Misc deductible' }] },
-      { key: 'name', type: 'text', label: 'Name', placeholder: 'e.g. Unit A' },
-      { key: 'amount', type: 'number', label: 'Amount (RM)' },
-      { key: 'month', type: 'month', label: 'Month' },
-      { key: 'year', type: 'year', label: 'Year' },
-      { key: 'file', type: 'file', label: 'Receipt' }
+      { key: 'name', type: 'text', label: 'Name', placeholder: 'e.g. Unit A', maxLength: 24 },
+      { key: 'freq', type: 'select', label: 'Frequency', options: FREQUENCIES },
+      { key: 'amount', type: 'money', label: 'Amount (RM)' },
+      { key: 'dueDate', type: 'date', label: 'Start date' },
+      { key: 'endMode', type: 'recur-end', label: 'Ends' },
+      { key: 'schedule', type: 'schedule', label: 'Items & receipts' },
+      { key: 'ics', type: 'calendar', label: 'Reminder' }
     ];
     var otherColumns = [
       { key: 'name', type: 'text', label: 'Name', placeholder: 'e.g. Design gig' },
@@ -1319,7 +2125,7 @@ var o=[];var l=Array.isArray(e);for(f=n.s.c;f<=n.e.c;++f)s[f]=ya(f);for(var c=n.
       h('div', { className: 'card' },
         h('div', null,
           h('div', { className: 'heading', style: { fontSize: 15 } }, 'Rental & loan interest'),
-          h('div', { className: 'muted', style: { fontSize: 12, marginTop: 2 } }, "Log each amount and mark whether it's rental income or a loan interest deduction.")
+          h('div', { className: 'muted', style: { fontSize: 12, marginTop: 2 } }, "Recurring like a bill — set a start date and how often it repeats, and mark whether it's rental income or a loan interest deduction. Rental income also counts toward your Passive income figures on the Dashboard.")
         ),
         h('div', { className: 'pill-row' },
           h('span', { className: 'pill' }, 'Income ' + fmtRM(props.rentalIncome)),
@@ -1332,9 +2138,11 @@ var o=[];var l=Array.isArray(e);for(f=n.s.c;f<=n.e.c;++f)s[f]=ya(f);for(var c=n.
           onChange: function (id, field, val) { props.onEntryChange('rental', id, field, val); },
           onRemove: function (id) { props.onEntryRemove('rental', id); },
           onDuplicate: function (id) { props.onEntryDuplicate('rental', id); },
-          onAttach: props.onAttachRental,
-          addLabel: 'Add entry', onAdd: function () { props.onEntryAdd('rental', { kind: 'income' }); }
-        })
+          onAttachOccurrence: props.onAttachRentalOccurrence, onToggleOccExempt: props.onToggleRentalOccExempt,
+          onIcs: props.onIcsRental,
+          addLabel: 'Add entry', onAdd: function () { props.onEntryAdd('rental', { kind: 'income', freq: 'monthly', dueDate: todayISO() }); }
+        }),
+        props.rentalList.length > 0 && h('button', { type: 'button', className: 'btn-chip', onClick: props.onIcsRentalAll, style: { alignSelf: 'flex-start' } }, '📅 Download all reminders (.ics)')
       ),
 
       h('div', { className: 'card' },
@@ -1370,6 +2178,7 @@ var o=[];var l=Array.isArray(e);for(f=n.s.c;f<=n.e.c;++f)s[f]=ya(f);for(var c=n.
             g.cats.map(function (cv) {
               return h(CategoryCard, {
                 key: cv.cat.id, cat: cv.cat, enabled: cv.enabled, isOpen: !!props.open[cv.cat.id], entries: cv.entries,
+                linked: cv.linked, goFinance: props.goFinance, assessmentYear: props.assessmentYear,
                 onToggleOpen: function () { props.onToggleOpen(cv.cat.id); },
                 onToggleEnabled: function () { props.onToggleEnabled(cv.cat.id); },
                 onCopy: function (text) { props.onCopy(cv.cat.id, text); }, copied: props.copiedId === cv.cat.id,
@@ -1377,7 +2186,14 @@ var o=[];var l=Array.isArray(e);for(f=n.s.c;f<=n.e.c;++f)s[f]=ya(f);for(var c=n.
                 onRemove: function (id) { props.onEntryRemove(cv.cat.id, id); },
                 onDuplicate: function (id) { props.onEntryDuplicate(cv.cat.id, id); },
                 onAttach: function (id, file) { props.onAttachCat(cv.cat.id, id, file); },
-                onAdd: function () { props.onEntryAdd(cv.cat.id, { subtopic: cv.cat.subtopics[0] }); }
+                onAttachOccurrence: function (row, occKey, file) { props.onAttachCatOccurrence(cv.cat.id, row, occKey, file); },
+                onToggleOccExempt: function (row, occKey, val) { props.onToggleCatOccExempt(cv.cat.id, row, occKey, val); },
+                onIcs: function (row) { props.onIcsCat(row); },
+                onAdd: function () {
+                  var extra = { subtopic: cv.cat.subtopics[0] };
+                  if (cv.cat.id === 'edu_medical_insurance') { extra.freq = 'monthly'; extra.dueDate = todayISO(); }
+                  props.onEntryAdd(cv.cat.id, extra);
+                }
               });
             })
           )
@@ -1387,10 +2203,129 @@ var o=[];var l=Array.isArray(e);for(f=n.s.c;f<=n.e.c;++f)s[f]=ya(f);for(var c=n.
     );
   }
 
-  // ---------------- summary tab ----------------
-  function SummaryTab(props) {
+  // ---------------- dashboard tab (tax summary + personal finance overview) ----------------
+  function DashboardTab(props) {
+    var R = props.R;
     return h(React.Fragment, null,
-      h('h5', { className: 'heading', style: { fontSize: 14, margin: '0 0 4px' } }, 'Dashboard'),
+      props.missingReceipts.length > 0 && h('div', { className: 'card warn' },
+        h('div', { style: { display: 'flex', alignItems: 'center', gap: 8 } },
+          Icon('alert', { size: 16 }),
+          h('div', { className: 'heading', style: { fontSize: 14 } }, props.missingReceipts.length + ' entr' + (props.missingReceipts.length === 1 ? 'y is' : 'ies are') + ' missing a receipt')
+        ),
+        h('div', { style: { display: 'flex', flexDirection: 'column', gap: 6, marginTop: 4 } },
+          props.missingReceipts.slice(0, 6).map(function (m) {
+            return h('div', { key: m.id, style: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', fontSize: 12, gap: 8 } },
+              h('span', null, (m.name || '(unnamed)') + ' · ' + m.where),
+              h('span', { style: { display: 'flex', alignItems: 'center', gap: 8, flex: 'none' } },
+                h('strong', null, R(m.amount)),
+                h('button', {
+                  type: 'button', className: 'btn-chip', style: { fontSize: 10, padding: '3px 8px' },
+                  onClick: function () { props.onExcludeReceipt(m.catId, m.entryId, m.occKey); }
+                }, 'No receipt needed')
+              )
+            );
+          }),
+          props.missingReceipts.length > 6 && h('div', { className: 'muted', style: { fontSize: 11 } }, '+ ' + (props.missingReceipts.length - 6) + ' more')
+        )
+      ),
+
+      h('h5', { className: 'heading', style: { fontSize: 14, margin: '0 0 4px' } }, 'Personal finance'),
+      h('div', { className: 'muted', style: { fontSize: 11, marginTop: -4 } }, 'Expected monthly expenditure vs. expected monthly income, from every active recurring bill, passive income source and rental entry.'),
+      h('div', { style: { display: 'flex', gap: 8, alignItems: 'stretch' } },
+        h('div', { className: 'kpi', style: { background: 'var(--coral-bg)', flex: 1 } },
+          h('div', { className: 'kpi-label', style: { color: '#c25a3d' } }, 'EXPECTED MONTHLY EXPENDITURE'),
+          h('div', { className: 'kpi-value', style: { color: '#c25a3d' } }, props.monthlyExpenditureFmt)
+        ),
+        h('div', { className: 'kpi', style: { background: 'var(--green-bg)', flex: 1 } },
+          h('div', { className: 'kpi-label', style: { color: 'var(--green-dark)' } }, 'EXPECTED MONTHLY INCOME'),
+          h('div', { className: 'kpi-value', style: { color: 'var(--green-dark)' } }, props.monthlyPassiveIncomeFmt),
+          props.monthlyRentalIncomeFmt !== 'RM 0.00' && h('div', { className: 'muted', style: { fontSize: 9.5, marginTop: 2 } }, 'incl. ' + props.monthlyRentalIncomeFmt + ' rental')
+        )
+      ),
+      h('div', { className: 'kpi-grid', style: { marginTop: 8 } },
+        h('div', { className: 'kpi', style: { background: 'var(--green-bg)' } },
+          h('div', { className: 'kpi-label', style: { color: 'var(--green-dark)' } }, 'MONTHLY PASSIVE INCOME'),
+          h('div', { className: 'kpi-value', style: { color: 'var(--green-dark)' } }, props.monthlyPassiveIncomeFmt)
+        ),
+        h('div', { className: 'kpi', style: { background: 'var(--purple-bg)' } },
+          h('div', { className: 'kpi-label', style: { color: 'var(--purple)' } }, 'MONTHLY INVESTING'),
+          h('div', { className: 'kpi-value', style: { color: 'var(--purple)' } }, props.monthlyInvestContribFmt)
+        ),
+        h('div', { className: 'kpi', style: { background: props.netMonthlyCashFlowNegative ? 'var(--coral-bg)' : '#f0ecfa' } },
+          h('div', { className: 'kpi-label', style: { color: props.netMonthlyCashFlowNegative ? '#c25a3d' : 'var(--purple)' } }, 'NET CASH FLOW / MO'),
+          h('div', { className: 'kpi-value', style: { color: props.netMonthlyCashFlowNegative ? '#c25a3d' : 'var(--purple)' } }, props.netMonthlyCashFlowFmt)
+        )
+      ),
+
+      h('h5', { className: 'heading', style: { fontSize: 13, margin: '14px 0 4px', color: '#c25a3d' } }, 'Payments — ' + props.curYear),
+      h('div', { className: 'kpi-grid' },
+        h('div', { className: 'kpi', style: { background: 'var(--coral-bg)' } },
+          h('div', { className: 'kpi-label', style: { color: '#c25a3d' } }, 'PAID YTD'),
+          h('div', { className: 'kpi-value', style: { color: '#c25a3d' } }, props.paymentsYTDFmt)
+        ),
+        h('div', { className: 'kpi', style: { background: '#f5f2fb' } },
+          h('div', { className: 'kpi-label', style: { color: 'var(--muted)' } }, 'EXPECTED YEAR-END'),
+          h('div', { className: 'kpi-value' }, props.paymentsYearEndFmt)
+        )
+      ),
+      props.paymentsBreakdown.length > 0 && h('div', { style: { display: 'flex', flexDirection: 'column', gap: 3 } },
+        props.paymentsBreakdown.map(function (p, i) {
+          return h('div', { key: i, style: { display: 'flex', justifyContent: 'space-between', fontSize: 11.5, padding: '3px 2px' } },
+            h('span', { className: 'muted' }, p.name),
+            h('span', null, R(p.ytd) + ' / ' + R(p.yearEnd))
+          );
+        })
+      ),
+
+      h('h5', { className: 'heading', style: { fontSize: 13, margin: '14px 0 4px', color: 'var(--purple)' } }, 'Investments — ' + props.curYear),
+      h('div', { className: 'kpi-grid' },
+        h('div', { className: 'kpi', style: { background: 'var(--purple-bg)' } },
+          h('div', { className: 'kpi-label', style: { color: 'var(--purple)' } }, 'INVESTED YTD'),
+          h('div', { className: 'kpi-value', style: { color: 'var(--purple)' } }, props.investmentsYTDFmt)
+        ),
+        h('div', { className: 'kpi', style: { background: '#f5f2fb' } },
+          h('div', { className: 'kpi-label', style: { color: 'var(--muted)' } }, 'EXPECTED YEAR-END'),
+          h('div', { className: 'kpi-value' }, props.investmentsYearEndFmt)
+        )
+      ),
+      props.investmentsBreakdown.length > 0 && h('div', { style: { display: 'flex', flexDirection: 'column', gap: 3 } },
+        props.investmentsBreakdown.map(function (p, i) {
+          return h('div', { key: i, style: { display: 'flex', justifyContent: 'space-between', fontSize: 11.5, padding: '3px 2px' } },
+            h('span', { className: 'muted' }, p.name),
+            h('span', null, R(p.ytd) + ' / ' + R(p.yearEnd))
+          );
+        })
+      ),
+
+      h('div', { className: 'card', style: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' } },
+        h('div', null,
+          h('div', { className: 'heading', style: { fontSize: 14 } }, 'Investment portfolio'),
+          h('div', { className: 'muted', style: { fontSize: 11.5 } }, 'Current value across all holdings')
+        ),
+        h('div', { style: { textAlign: 'right' } },
+          h('div', { className: 'heading', style: { fontSize: 17, color: 'var(--green-dark)' } }, props.portfolioTotalValueFmt),
+          h('div', { style: { fontSize: 11, color: props.portfolioGainNegative ? 'var(--coral)' : 'var(--green-dark)' } }, (props.portfolioGainNegative ? '-' : '+') + props.portfolioGainFmt)
+        )
+      ),
+
+      props.upcomingPayments.length > 0 && h(React.Fragment, null,
+        h('h5', { className: 'heading', style: { fontSize: 13, margin: '14px 0 4px' } }, 'Upcoming payments'),
+        props.upcomingPayments.map(function (u, i) {
+          var overdue = u.days < 0;
+          return h('div', { key: i, className: 'card', style: { padding: '10px 12px', gap: 4, flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' } },
+            h('div', null,
+              h('div', { style: { fontSize: 12.5, fontWeight: 700 } }, (u.entry.name || u.source)),
+              h('div', { className: 'muted', style: { fontSize: 11 } }, u.source + ' · ' + (overdue ? 'overdue ' + Math.abs(u.days) + 'd' : u.days === 0 ? 'due today' : 'in ' + u.days + 'd') + ' · ' + u.date.toISOString().slice(0, 10))
+            ),
+            h('div', { style: { display: 'flex', alignItems: 'center', gap: 8 } },
+              h('strong', { style: { color: overdue ? 'var(--coral)' : 'var(--text)' } }, R(parseFloat(u.entry.amount) || 0)),
+              h('button', { type: 'button', className: 'file-btn', onClick: function () { props.onIcsUpcoming(u); } }, '📅')
+            )
+          );
+        })
+      ),
+
+      h('h5', { className: 'heading', style: { fontSize: 14, margin: '18px 0 4px' } }, 'Tax relief'),
       h('div', { className: 'kpi-grid' },
         h('div', { className: 'kpi', style: { background: 'var(--green-bg)' } },
           h('div', { className: 'kpi-label', style: { color: 'var(--green-dark)' } }, 'CLAIMED'),
@@ -1416,10 +2351,10 @@ var o=[];var l=Array.isArray(e);for(f=n.s.c;f<=n.e.c;++f)s[f]=ya(f);for(var c=n.
           var pct = Math.min(100, o.cap ? (o.capped / o.cap * 100) : 0);
           return h('div', { key: i, className: 'card', style: { padding: '10px 12px', gap: 6 } },
             h('div', { style: { display: 'flex', justifyContent: 'space-between', fontSize: 12.5 } },
-              h('span', { style: { fontWeight: 700 } }, o.name), h('span', { style: { color: '#c25a3d', fontWeight: 700 } }, fmtRM(o.gap) + ' unclaimed')),
+              h('span', { style: { fontWeight: 700 } }, o.name), h('span', { style: { color: '#c25a3d', fontWeight: 700 } }, R(o.gap) + ' unclaimed')),
             h('div', { className: 'progress' }, h('div', { style: { width: pct + '%' } })),
             h('div', { style: { display: 'flex', justifyContent: 'space-between', fontSize: 10.5 }, className: 'muted' },
-              h('span', null, fmtRM(o.capped) + ' claimed'), h('span', null, 'cap ' + fmtRM(o.cap)))
+              h('span', null, R(o.capped) + ' claimed'), h('span', null, 'cap ' + R(o.cap)))
           );
         })
       ),
@@ -1433,14 +2368,14 @@ var o=[];var l=Array.isArray(e);for(f=n.s.c;f<=n.e.c;++f)s[f]=ya(f);for(var c=n.
             h('div', { style: { display: 'flex', justifyContent: 'space-between', fontSize: 12, alignItems: 'center' } },
               h('span', { style: { fontWeight: 700 } }, cv.cat.name),
               h('span', { style: { display: 'flex', alignItems: 'center', gap: 6, color: 'var(--green-dark)', fontWeight: 700 } },
-                fmtRM(cv.capped),
+                R(cv.capped),
                 h('button', { type: 'button', className: 'icon-btn', onClick: function () { props.onCopy(cv.cat.id, fmtRM(cv.capped)); } }, Icon('copy', { size: 12 })),
                 copied && h('span', { style: { fontSize: 10 } }, 'Copied')
               )
             ),
             h('div', { className: 'progress' }, h('div', { style: { width: pct + '%' } })),
             h('div', { style: { display: 'flex', justifyContent: 'space-between', fontSize: 10.5 }, className: 'muted' },
-              h('span', null, 'entered'), h('span', null, 'cap ' + fmtRM(cv.cat.cap)))
+              h('span', null, 'entered'), h('span', null, 'cap ' + R(cv.cat.cap)))
           );
         })
       ),
@@ -1449,9 +2384,9 @@ var o=[];var l=Array.isArray(e);for(f=n.s.c;f<=n.e.c;++f)s[f]=ya(f);for(var c=n.
       h('table', { className: 'tax-table' },
         h('thead', null, h('tr', null, h('th', null, 'Category'), h('th', { style: { textAlign: 'right' } }, 'Claimed'), h('th', { style: { textAlign: 'right' } }, 'Cap'))),
         h('tbody', null,
-          h('tr', null, h('td', null, props.fixedCat.name), h('td', { style: { textAlign: 'right' } }, fmtRM(props.fixedCat.cap)), h('td', { style: { textAlign: 'right' } }, fmtRM(props.fixedCat.cap))),
+          h('tr', null, h('td', null, props.fixedCat.name), h('td', { style: { textAlign: 'right' } }, R(props.fixedCat.cap)), h('td', { style: { textAlign: 'right' } }, R(props.fixedCat.cap))),
           props.enabledCategoriesView.map(function (cv) {
-            return h('tr', { key: cv.cat.id }, h('td', null, cv.cat.name), h('td', { style: { textAlign: 'right' } }, fmtRM(cv.capped)), h('td', { style: { textAlign: 'right' } }, fmtRM(cv.cat.cap)));
+            return h('tr', { key: cv.cat.id }, h('td', null, cv.cat.name), h('td', { style: { textAlign: 'right' } }, R(cv.capped)), h('td', { style: { textAlign: 'right' } }, R(cv.cat.cap)));
           })
         ),
         h('tfoot', null, h('tr', { style: { fontWeight: 700, color: 'var(--green-dark)' } }, h('td', { style: { padding: '8px 4px' } }, 'Total relief'), h('td', { colSpan: 2, style: { textAlign: 'right', padding: '8px 4px' } }, props.grandTotalFmt)))
@@ -1471,13 +2406,163 @@ var o=[];var l=Array.isArray(e);for(f=n.s.c;f<=n.e.c;++f)s[f]=ya(f);for(var c=n.
     );
   }
 
+  // ---------------- bills & income tab ----------------
+  function BillsIncomeTab(props) {
+    var billColumns = [
+      { key: 'name', type: 'text', label: 'Name', placeholder: 'e.g. Astro', maxLength: 24 },
+      { key: 'category', type: 'select', label: 'Category', options: BILL_CATEGORIES },
+      { key: 'freq', type: 'select', label: 'Frequency', options: FREQUENCIES },
+      { key: 'amount', type: 'money', label: 'Amount (RM)' },
+      { key: 'dueDate', type: 'date', label: 'Start date' },
+      { key: 'endMode', type: 'recur-end', label: 'Ends' },
+      { key: 'taxLink', type: 'select', label: 'Tax relief link', options: TAX_LINK_OPTIONS },
+      { key: 'schedule', type: 'schedule', label: 'Items & receipts' },
+      { key: 'ics', type: 'calendar', label: 'Reminder' }
+    ];
+    var incomeColumns = [
+      { key: 'name', type: 'text', label: 'Name', placeholder: 'e.g. REIT dividend', maxLength: 24 },
+      { key: 'category', type: 'text', label: 'Source', placeholder: 'e.g. Dividends', maxLength: 24 },
+      { key: 'freq', type: 'select', label: 'Frequency', options: FREQUENCIES },
+      { key: 'amount', type: 'money', label: 'Amount (RM)' },
+      { key: 'dueDate', type: 'date', label: 'Start date' },
+      { key: 'endMode', type: 'recur-end', label: 'Ends' },
+      { key: 'schedule', type: 'schedule', label: 'Items' },
+      { key: 'ics', type: 'calendar', label: 'Reminder' }
+    ];
+
+    return h(React.Fragment, null,
+      h('div', { className: 'card' },
+        h('div', { style: { display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: 10 } },
+          h('div', null,
+            h('div', { className: 'heading', style: { fontSize: 15 } }, 'Recurring bills'),
+            h('div', { className: 'muted', style: { fontSize: 12, marginTop: 2 } }, 'Housing, utilities, insurance, subscriptions and loans. Link one to a tax relief category if it also qualifies (e.g. life insurance).')
+          ),
+          h('span', { className: 'heading', style: { fontSize: 13, color: '#c25a3d', whiteSpace: 'nowrap' } }, props.monthlyExpenditure + '/mo')
+        ),
+        h(EntryTable, {
+          columns: billColumns, rows: props.billsList,
+          onChange: function (id, field, val) { props.onChange('bills', id, field, val); },
+          onRemove: function (id) { props.onRemove('bills', id); },
+          onDuplicate: function (id) { props.onDuplicate('bills', id); },
+          onIcs: props.onIcs,
+          onAttachOccurrence: function (row, occKey, file) { props.onAttachOccurrence('bills', row, occKey, file); },
+          onToggleOccExempt: function (row, occKey, val) { props.onToggleOccExempt('bills', row, occKey, val); },
+          addLabel: 'Add bill', onAdd: function () { props.onAdd('bills', { freq: 'monthly', category: 'Other', dueDate: todayISO(), taxLink: '' }); }
+        }),
+        props.billsList.length > 0 && h('button', { type: 'button', className: 'btn-chip', onClick: props.onIcsAll, style: { alignSelf: 'flex-start' } }, '📅 Download all bill reminders (.ics)')
+      ),
+
+      h('div', { className: 'card' },
+        h('div', { style: { display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: 10 } },
+          h('div', null,
+            h('div', { className: 'heading', style: { fontSize: 15 } }, 'Passive income'),
+            h('div', { className: 'muted', style: { fontSize: 12, marginTop: 2 } }, 'Dividends, rent from a paid-off property, royalties, interest — money that arrives on its own.')
+          ),
+          h('span', { className: 'heading', style: { fontSize: 13, color: 'var(--green-dark)', whiteSpace: 'nowrap' } }, props.monthlyPassiveIncome + '/mo')
+        ),
+        h(EntryTable, {
+          columns: incomeColumns, rows: props.incomeList,
+          onChange: function (id, field, val) { props.onChange('passive_income', id, field, val); },
+          onRemove: function (id) { props.onRemove('passive_income', id); },
+          onDuplicate: function (id) { props.onDuplicate('passive_income', id); },
+          onIcs: props.onIcs,
+          onAttachOccurrence: function (row, occKey, file) { props.onAttachOccurrence('passive_income', row, occKey, file); },
+          onToggleOccExempt: function (row, occKey, val) { props.onToggleOccExempt('passive_income', row, occKey, val); },
+          addLabel: 'Add income source', onAdd: function () { props.onAdd('passive_income', { freq: 'monthly', dueDate: todayISO() }); }
+        }),
+        (props.rentalIncomeLinked || []).length > 0 && h('div', { style: { display: 'flex', flexDirection: 'column', gap: 6, marginTop: 4 } },
+          h('div', { className: 'muted', style: { fontSize: 10.5, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '.03em' } }, 'Automatically included from Rental & loan interest'),
+          props.rentalIncomeLinked.map(function (r) {
+            return h('div', { key: r.id, style: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', background: '#faf8fd', border: '1px solid var(--border)', borderRadius: 10, padding: '7px 10px', fontSize: 12 } },
+              h('span', null, '🏠 ', r.name, h('span', { className: 'muted' }, ' · ' + r.freqLabel)),
+              h('span', { style: { display: 'flex', alignItems: 'center', gap: 8 } },
+                h('strong', null, r.monthlyFmt),
+                h('button', { type: 'button', className: 'btn-chip', onClick: function () { props.goTax && props.goTax(); } }, 'Edit')
+              )
+            );
+          })
+        )
+      )
+    );
+  }
+
+  // ---------------- investments tab ----------------
+  function InvestTab(props) {
+    var contribColumns = [
+      { key: 'name', type: 'text', label: 'Name', placeholder: 'e.g. Index fund', maxLength: 24 },
+      { key: 'freq', type: 'select', label: 'Frequency', options: FREQUENCIES },
+      { key: 'amount', type: 'money', label: 'Amount (RM)' },
+      { key: 'dueDate', type: 'date', label: 'Start date' },
+      { key: 'endMode', type: 'recur-end', label: 'Ends' },
+      { key: 'taxLink', type: 'select', label: 'Tax relief link', options: TAX_LINK_OPTIONS },
+      { key: 'schedule', type: 'schedule', label: 'Items & receipts' },
+      { key: 'ics', type: 'calendar', label: 'Reminder' }
+    ];
+    var portfolioColumns = [
+      { key: 'name', type: 'text', label: 'Holding', placeholder: 'e.g. VWRA', maxLength: 24 },
+      { key: 'type', type: 'select', label: 'Type', options: PORTFOLIO_TYPES },
+      { key: 'currentValue', type: 'money', label: 'Current value (RM)' },
+      { key: 'costBasis', type: 'money', label: 'Cost basis (RM)' },
+      { key: 'notes', type: 'text', label: 'Notes', placeholder: 'e.g. Broker', maxLength: 24 },
+      { key: 'file', type: 'file', label: 'Statement' }
+    ];
+
+    return h(React.Fragment, null,
+      h('div', { className: 'card' },
+        h('div', { style: { display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: 10 } },
+          h('div', null,
+            h('div', { className: 'heading', style: { fontSize: 15 } }, 'Investment contributions'),
+            h('div', { className: 'muted', style: { fontSize: 12, marginTop: 2 } }, 'Money going INTO investments — EPF top-ups, PRS, unit trust, brokerage transfers. Link to a tax relief category where it qualifies.')
+          ),
+          h('span', { className: 'heading', style: { fontSize: 13, color: 'var(--purple)', whiteSpace: 'nowrap' } }, props.monthlyInvestContrib + '/mo')
+        ),
+        h(EntryTable, {
+          columns: contribColumns, rows: props.investContribList,
+          onChange: function (id, field, val) { props.onChange('invest_contrib', id, field, val); },
+          onRemove: function (id) { props.onRemove('invest_contrib', id); },
+          onDuplicate: function (id) { props.onDuplicate('invest_contrib', id); },
+          onIcs: props.onIcs,
+          onAttachOccurrence: function (row, occKey, file) { props.onAttachOccurrence('invest_contrib', row, occKey, file); },
+          onToggleOccExempt: function (row, occKey, val) { props.onToggleOccExempt('invest_contrib', row, occKey, val); },
+          addLabel: 'Add contribution', onAdd: function () { props.onAdd('invest_contrib', { freq: 'monthly', dueDate: todayISO(), taxLink: '' }); }
+        }),
+        props.investContribList.length > 0 && h('button', { type: 'button', className: 'btn-chip', onClick: props.onIcsAll, style: { alignSelf: 'flex-start' } }, '📅 Download all investment reminders (.ics)')
+      ),
+
+      h('div', { className: 'card' },
+        h('div', { style: { display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: 10 } },
+          h('div', null,
+            h('div', { className: 'heading', style: { fontSize: 15 } }, 'Investment portfolio'),
+            h('div', { className: 'muted', style: { fontSize: 12, marginTop: 2 } }, 'A snapshot of what you currently hold. Update the current value whenever you check your accounts.')
+          ),
+          h('div', { style: { textAlign: 'right' } },
+            h('div', { className: 'heading', style: { fontSize: 14, color: 'var(--green-dark)' } }, props.portfolioTotalValueFmt),
+            h('div', { style: { fontSize: 10.5, color: props.portfolioGainNegative ? 'var(--coral)' : 'var(--green-dark)' } }, (props.portfolioGainNegative ? '-' : '+') + props.portfolioGainFmt)
+          )
+        ),
+        h(EntryTable, {
+          columns: portfolioColumns, rows: props.portfolioList,
+          onChange: function (id, field, val) { props.onChange('portfolio', id, field, val); },
+          onRemove: function (id) { props.onRemove('portfolio', id); },
+          onDuplicate: function (id) { props.onDuplicate('portfolio', id); },
+          onAttach: props.onAttachPortfolio,
+          addLabel: 'Add holding', onAdd: function () { props.onAdd('portfolio', { type: PORTFOLIO_TYPES[0], currentValue: '', costBasis: '' }); }
+        })
+      )
+    );
+  }
+
   // ---------------- data tab (saved + export merged) ----------------
   function DataTab(props) {
     return h(React.Fragment, null,
+      props.missingReceiptsCount > 0 && h('div', { className: 'card warn' },
+        h('p', { style: { margin: 0, fontSize: 12.5, lineHeight: 1.5 } }, props.missingReceiptsCount + ' entr' + (props.missingReceiptsCount === 1 ? 'y is' : 'ies are') + ' missing a receipt — see the Dashboard tab for the list.')
+      ),
+
       h('div', { className: 'card' },
         h('div', { className: 'heading', style: { fontSize: 15 } }, 'Backup & transfer to another device'),
         h('div', { className: 'muted', style: { fontSize: 12.5, lineHeight: 1.6 } },
-          'Your entries autosave to this browser only. Download a backup file, then import it on another phone, tablet or computer to pick up where you left off. Receipt files stay in the folder you chose on the original device.'),
+          'This single file covers everything — tax relief entries, bills, passive income, investment contributions and your portfolio. It autosaves to this browser only; download a backup, then import it on another phone, tablet or computer to pick up where you left off. Receipt files stay in the folder you chose on the original device.'),
         h('button', { type: 'button', className: 'btn btn-primary btn-block', onClick: props.exportJSON }, 'Download backup (.json)'),
         h('button', {
           type: 'button', className: 'btn btn-secondary btn-block', onClick: function () { props.importInputRef.current && props.importInputRef.current.click(); }
@@ -1512,7 +2597,7 @@ var o=[];var l=Array.isArray(e);for(f=n.s.c;f<=n.e.c;++f)s[f]=ya(f);for(var c=n.
         h('div', { className: 'muted', style: { fontSize: 12.5, lineHeight: 1.6 } },
           props.categoriesWithEntriesCount + ' categories with entries · ' + props.attachmentCount + ' receipts attached', h('br'),
           props.incomeEntriesCount + ' income entries · ' + props.totalOtherIncomeFmt + ' net other income', h('br'),
-          'Bundles a consolidated Excel workbook plus a copy of every receipt still accessible in your chosen folder.'),
+          'Bundles one Excel workbook — Overview, Tax Relief Detail, Other Income, Bills, Passive Income, Investment Contributions and Investment Portfolio sheets — plus a copy of every receipt still accessible in your chosen folder.'),
         h('div', { style: { height: 1, background: 'var(--border)', margin: '2px 0' } }),
         h('div', { style: { display: 'flex', justifyContent: 'space-between', fontSize: 13 } }, h('span', null, 'Grand total relief'), h('strong', { style: { color: 'var(--green-dark)' } }, props.grandTotalFmt)),
         h('button', { type: 'button', className: 'btn btn-primary btn-block', disabled: props.exporting, onClick: props.generateExport }, props.exporting ? 'Generating…' : 'Generate & download ZIP'),

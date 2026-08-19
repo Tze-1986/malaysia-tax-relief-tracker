@@ -1,0 +1,3 @@
+0000000000000000000000000000000000000000 2b563e11dda38154745683ff63a846aa416b2032 Tze <ngts.3ds@gmail.com> 1786621455 +0800	commit (initial): Malaysia tax relief tracker: household profile toggle, table-style multi-entry categories, JSON backup/import, ZIP+Excel export
+2b563e11dda38154745683ff63a846aa416b2032 efc13eb5b6c8f21f33bb17ab712ffc2b11b5bb4c Tze <ngts.3ds@gmail.com> 1786786397 +0800	commit: Let users mark individual entries as not needing a receipt (per-row checkbox + dashboard quick-dismiss)
+efc13eb5b6c8f21f33bb17ab712ffc2b11b5bb4c dc17c5bd93eba84c521bc57b2dfb54d59a851439 Tze <ngts.3ds@gmail.com> 1787141710 +0800	commit: Add per-occurrence receipt attach to Passive Income entries (was missing entirely)
